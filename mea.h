@@ -26,7 +26,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //#include <RTXIprintfilter.h>
 #include <QtGui>
 #include <cstdlib>
+#include <qwt_plot.h>
 #include <qwt_plot_curve.h>
+#include <qwt_scale_engine.h>
 #include <qwt_compat.h>
 
 class MEA : public DefaultGUIModel {
@@ -47,25 +49,21 @@ class MEA : public DefaultGUIModel {
 		virtual void update(DefaultGUIModel::update_flags_t);
 	
 	private:
-		// inputs, states
-		boost::circular_buffer<double> signalin; // buffer for data before event
-		double dt;
+		// inputs, states, related constants
 		long long count; // keep track of plug-in time
+		double dt;
 		double systime;
 		int triggered;
-		QwtArray<double> staavg;
-		QwtArray<double> stasum;
-		QwtArray<double> time;
-		double eventcount; // number of events
-		int wincount; // keep track of time since event
+		// TO-DO: change this to a buffer of structs (each containing channel no., spike time, spike waveform)
+		boost::circular_buffer<double> meaBuffer; // buffer for all incoming data
+		// TO-DO: reduce or increase this size if needed
+		int numChannels = 1; // TO-DO: change to 60 during actual testing
+		int n = 500; // constant size of meaBuffer for an individual channel (roughly 5 seconds of data)
 		
-		double plotxmin; // units of time
+		double plotxmin; // units: time
 		double plotxmax;
-		int leftwin; // number of timesteps
-		int rightwin;
-		int n;
-		double plotymin;
-		double plotymax;
+		double plotymin = 0; // units: MEA channel number
+		double plotymax = 59; // TO-DO: set to (numChannels-1)
 		
 		// QT components
 		BasicPlot *rplot;

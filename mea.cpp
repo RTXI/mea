@@ -33,10 +33,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <numeric>
 #include <time.h>
 
-#include <QtGui>
 #include <sys/stat.h>
-#include <qwt_plot.h>
-#include <qwt_plot_curve.h>
 
 #if QT_VERSION >= 0x040300
 #ifdef QT_SVG_LIB
@@ -79,14 +76,20 @@ MEA::MEA(void) : DefaultGUIModel("MEA", ::vars, ::num_vars) {
 }
 
 void MEA::customizeGUI(void) {
+	// TO-DO: add button "Start raster plot" that will start a 4 Hz refresh rate
+	//        remove unnecessary buttons, etc
+	//        fix log scaling on the plot
+	//        fix input boxes
 	QGridLayout *customLayout = DefaultGUIModel::getLayout();
 	
 	// Need to adjust these for the raster plot
 	rplot = new BasicPlot(this);
 	rCurve = new QwtPlotCurve("Curve 1");
+	rCurve->setStyle(QwtPlotCurve::NoCurve);
 	rCurve->attach(rplot);
 	rCurve->setPen(QColor(Qt::white));
-	//rCurve->setAxisOptions
+	rplot->setAxisScaleEngine(QwtPlot::xBottom, new QwtLogScaleEngine);
+	
 	
 	QVBoxLayout *rightLayout = new QVBoxLayout;
 	QGroupBox *plotBox = new QGroupBox("MEA Raster Plot");
@@ -118,6 +121,7 @@ void MEA::customizeGUI(void) {
 	DefaultGUIModel::modifyButton->setToolTip("Commit changes to parameter values");
 	DefaultGUIModel::unloadButton->setToolTip("Close module");
 
+	// TO-DO: max refresh rate should be 4 Hz
 	QTimer *timer2 = new QTimer(this);
 	timer2->start(2000);
 	QObject::connect(timer2, SIGNAL(timeout(void)), this, SLOT(refreshMEA(void)));
@@ -130,23 +134,15 @@ void MEA::customizeGUI(void) {
 MEA::~MEA(void) {}
 
 void MEA::execute(void) {
-	systime = count * dt; // current time,
-	signalin.push_back(input(0)); // always buffer, we don't know when the event occurs
+	systime = count * dt; // current time
+	// TO-DO: likely not necessary for the raster plot
+	meaBuffer.push_back(input(0)); // always buffer, we don't know when the event occurs
 	
+	// currently trying this for one input; will need to adjust things for MEAs
 	if (triggered == 1) {
-		wincount++;
-		if (wincount == rightwin) { // compute average, do this way to keep numerical accuracy
-			for (int i = 0; i < leftwin + rightwin + 1; i++) {
-				stasum[i] = stasum[i] + signalin[i];
-				staavg[i] = stasum[i] / eventcount;
-			}
-		} else if (wincount > rightwin) {
-			wincount = 0;
-			triggered = 0;
-		}
+		// TO-DO: add to circular buffer for displaying on raster plot
 	} else if (triggered == 0 && input(1) == 1) {
 		triggered = 1;
-		eventcount++;
 	}
 	
 	count++; // increment count to measure time
@@ -173,13 +169,14 @@ void MEA::update(DefaultGUIModel::update_flags_t flag) {
 			break;
 
 		case UNPAUSE:
-			bookkeep();
 			printf("Protocol started.\n");
+			bookkeep();
 			break;
 
 		case PERIOD:
 			dt = RT::System::getInstance()->getPeriod() * 1e-9;
 			bookkeep();
+			break;
 		
 		default:
 			break;
@@ -188,82 +185,61 @@ void MEA::update(DefaultGUIModel::update_flags_t flag) {
 
 // custom functions
 void MEA::initParameters() {
+	systime = 0;
 	dt = RT::System::getInstance()->getPeriod() * 1e-9; // s
-	signalin.clear();
-	assert(signalin.size() == 0);
-	plotxmin = 0; // s
+	meaBuffer.clear();
+	assert(meaBuffer.size() == 0);
+	meaBuffer.rset_capacity(n * numChannels); // set default size of circular buffer
+	plotxmin = 0; // units: seconds
 	plotxmax = 10;
-	plotymin = 0;
-	plotymax = 59;
 	bookkeep();
 }
 
 void MEA::bookkeep() {
+	// TO-DO: maybe update the x-axis here
 	triggered = 0;
-	count = 0;
-	eventcount = 0;
-	wincount = 0;
-	systime = 0;
-	n = leftwin + rightwin + 1;
-	leftwin = int(plotxmin / dt);
-	rightwin = int(plotxmax / dt);
-	signalin.rset_capacity(n);
-	staavg.resize(n);
-	stasum.resize(n);
-	time.resize(n);
-	for (int i = 0; i < n; i++) {
-		signalin.push_back(0);
-		stasum[i] = 0;
-		staavg[i] = 0;
-		time[i] = dt * i - plotxmin;
-	}
 }
 
 void MEA::refreshMEA() {
-	rCurve->setSamples(time, staavg);//, n);
+	//rCurve->setSamples(time, staavg);//, n);
 	rplot->replot();
-	emit setPlotRange(-plotxmin, plotxmax, 0, 60);
+	emit setPlotRange(-plotxmin, plotxmax, plotymin, plotymax);
 }
 
 void MEA::clearData() {
-	eventcount = 0;
-	for (int i = 0; i < n; i++) {
-		signalin.push_back(0);
-	}
-	triggered = 0;
-	wincount = 0;
-	for (int i = 0; i < n; i++) {
-		stasum[i] = 0;
-		staavg[i] = 0;
-	}
+	//eventcount = 0;
+	//for (int i = 0; i < n; i++) {
+		//meaBuffer.push_back(0);
+	//}
+	//triggered = 0;
 	
-	rCurve->setSamples(time, staavg);//, n);
-	rplot->replot();
+	//rCurve->setSamples(time, staavg);//, n);
+	//rplot->replot();
 }
 
 void MEA::saveData() {
-	QFileDialog* fd = new QFileDialog(this);//, "Save File As", TRUE);
-	fd->setFileMode(QFileDialog::AnyFile);
-	fd->setViewMode(QFileDialog::Detail);
-	QStringList fileList;
-	QString fileName;
-	if (fd->exec() == QDialog::Accepted) {
-		fileList = fd->selectedFiles();
-		if (!fileList.isEmpty()) fileName = fileList[0];
+	//QFileDialog* fd = new QFileDialog(this);//, "Save File As", TRUE);
+	//fd->setFileMode(QFileDialog::AnyFile);
+	//fd->setViewMode(QFileDialog::Detail);
+	//QStringList fileList;
+	//QString fileName;
+	//if (fd->exec() == QDialog::Accepted) {
+		//fileList = fd->selectedFiles();
+		//if (!fileList.isEmpty()) fileName = fileList[0];
 		
-		if (OpenFile(fileName)) {
-			for (int i = 0; i < n; i++) {
-				stream << (double) time[i] << " " << (double) staavg[i] << "\n";
-			}
-			dataFile.close();
-			printf("File closed.\n");
-		} else {
-			QMessageBox::information(this,
-			"Event-triggered Average: Save Average",
-			"There was an error writing to this file. You can view\n"
-			"the values that should be plotted in the terminal.\n");
-		}
-	}
+		//if (OpenFile(fileName)) {
+			//for (int i = 0; i < n; i++) {
+				//stream << (double) time[i] << " " << (double) staavg[i] << "\n";
+			//}
+			//dataFile.close();
+			//printf("File closed.\n");
+		//} else {
+			//QMessageBox::information(this,
+			//"Event-triggered Average: Save Average",
+			//"There was an error writing to this file. You can view\n"
+			//"the values that should be plotted in the terminal.\n");
+		//}
+	//}
 }
 
 bool MEA::OpenFile(QString FName) {
