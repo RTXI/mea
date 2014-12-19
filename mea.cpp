@@ -17,14 +17,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 /*
-* MEA
-*/
-
-/*
-* Thoughts:
-* 	Want to implement a logarithmic time scale on the raster plot (see QwtLogScaleEngine)
-* 	Increment the plot x-max parameter based on the current time
-* 	Allow user to scroll to previous times in plot
+* MEA module: displays a raster plot of MEA activity
 */
 
 #include "mea.h"
@@ -53,7 +46,7 @@ extern "C" Plugin::Object *createRTXIPlugin(void) {
 }
 
 static DefaultGUIModel::variable_t vars[] = {
-	{ "Input", "MEA waveform input", DefaultGUIModel::INPUT, },
+	{ "Input", "MEA input", DefaultGUIModel::INPUT, },
 	{ "Plot x-min (s)", "X-min for the MEA raster plot",
 		DefaultGUIModel::PARAMETER | DefaultGUIModel::DOUBLE, },
 	{ "Plot x-max (s)", "X-max for the MEA raster plot",
@@ -89,7 +82,7 @@ void MEA::customizeGUI(void) {
 	rCurve->attach(rplot);
 	rCurve->setPen(QColor(Qt::white));
 	rplot->setAxisScaleEngine(QwtPlot::xBottom, new QwtLogScaleEngine);
-	
+	rplot->setAxisScale(QwtPlot::xBottom, 0.1, 100);
 	
 	QVBoxLayout *rightLayout = new QVBoxLayout;
 	QGroupBox *plotBox = new QGroupBox("MEA Raster Plot");
@@ -135,15 +128,14 @@ MEA::~MEA(void) {}
 
 void MEA::execute(void) {
 	systime = count * dt; // current time
-	// TO-DO: likely not necessary for the raster plot
-	meaBuffer.push_back(input(0)); // always buffer, we don't know when the event occurs
+
+	// TO-DO: need to adjust things for multiple channels
+	// add to circular buffer for displaying on raster plot
+	spike.channelNum = 0; // TO-DO: pull from MEA input frame
+	spike.spktime = input(0); // TO-DO: update once input frame is more defined
+	meaBuffer.push_back(spike);
 	
-	// currently trying this for one input; will need to adjust things for MEAs
-	if (triggered == 1) {
-		// TO-DO: add to circular buffer for displaying on raster plot
-	} else if (triggered == 0 && input(1) == 1) {
-		triggered = 1;
-	}
+	// TO-DO: keep track of number of spikes and reset to 0 in refreshMEA
 	
 	count++; // increment count to measure time
 	return;
@@ -185,6 +177,7 @@ void MEA::update(DefaultGUIModel::update_flags_t flag) {
 
 // custom functions
 void MEA::initParameters() {
+	// TO-DO: add init values for new variables (see header file)
 	systime = 0;
 	dt = RT::System::getInstance()->getPeriod() * 1e-9; // s
 	meaBuffer.clear();
@@ -197,15 +190,26 @@ void MEA::initParameters() {
 
 void MEA::bookkeep() {
 	// TO-DO: maybe update the x-axis here
-	triggered = 0;
 }
 
 void MEA::refreshMEA() {
-	//rCurve->setSamples(time, staavg);//, n);
-	rplot->replot();
-	emit setPlotRange(-plotxmin, plotxmax, plotymin, plotymax);
+	// TO-DO: update raster plot
+	//        step through buffer (starting from previous location using a file-scope iterator)
+	//        add each spike to rCurve with channelNum and spktime
+	//        is setSamples appropriate here? it probably overwrites old values on the plot
+	//        stop when number of spikes since last refresh has been reached (don't want to step through entire buffer)
+	//        reset number of spikes since last refresh
+	
+	//for {
+		//rCurve->setSamples(spike.channelNum[i], spike.spktime[i]);
+	//}
+	
+	rplot->replot(); // TO-DO: is this the appropriate function?
+	emit setPlotRange(-plotxmin, plotxmax, plotymin, plotymax); // TO-DO: need to fix x-axis scale and labels
+	setState("Time (s)", systime);
 }
 
+// To-DO: fix or delete?
 void MEA::clearData() {
 	//eventcount = 0;
 	//for (int i = 0; i < n; i++) {
@@ -217,6 +221,7 @@ void MEA::clearData() {
 	//rplot->replot();
 }
 
+// TO-DO: change STA stuff to raster plot
 void MEA::saveData() {
 	//QFileDialog* fd = new QFileDialog(this);//, "Save File As", TRUE);
 	//fd->setFileMode(QFileDialog::AnyFile);
@@ -242,6 +247,7 @@ void MEA::saveData() {
 	//}
 }
 
+// TO-DO: test and fix if necessary
 bool MEA::OpenFile(QString FName) {
 	dataFile.setFileName(FName);
 	if (dataFile.exists()) {
@@ -269,6 +275,7 @@ bool MEA::OpenFile(QString FName) {
 	return true;
 }
 
+// TO-DO: fix? this is commented out in STA module
 void MEA::print() {
 /*
 	#if 1
@@ -312,39 +319,40 @@ void MEA::print() {
 		}
 */
 }
-	
+
+// TO-DO: test and fix if necessary
 void MEA::exportSVG() {
-	QString fileName = "STA.svg";
+	//QString fileName = "STA.svg";
 		
-	#if QT_VERSION < 0x040000
+	//#if QT_VERSION < 0x040000
 	
-	#ifndef QT_NO_FILEDIALOG
-	fileName = QFileDialog::getSaveFileName("STA.svg", "SVG Documents (*.svg)", this);
-	#endif
-	if (!fileName.isEmpty()) {
-		// enable workaround for Qt3 misalignments
-		QwtPainter::setSVGMode(true);
-		QPicture picture;
-		QPainter p(&picture);
-		rplot->print(&p, QRect(0, 0, 800, 600));
-		p.end();
-		picture.save(fileName, "svg");
-	}
+	//#ifndef QT_NO_FILEDIALOG
+	//fileName = QFileDialog::getSaveFileName("STA.svg", "SVG Documents (*.svg)", this);
+	//#endif
+	//if (!fileName.isEmpty()) {
+		//// enable workaround for Qt3 misalignments
+		//QwtPainter::setSVGMode(true);
+		//QPicture picture;
+		//QPainter p(&picture);
+		//rplot->print(&p, QRect(0, 0, 800, 600));
+		//p.end();
+		//picture.save(fileName, "svg");
+	//}
 	
-	#elif QT_VERSION >= 0x040300
+	//#elif QT_VERSION >= 0x040300
 	
-	#ifdef QT_SVG_LIB
-	#ifndef QT_NO_FILEDIALOG
-	fileName = QFileDialog::getSaveFileName(
-	this, "Export File Name", QString(),
-	"SVG Documents (*.svg)");
-	#endif
-	if ( !fileName.isEmpty() ) {
-		QSvgGenerator generator;
-		generator.setFileName(fileName);
-		generator.setSize(QSize(800, 600));
-		rplot->print(generator);
-	}
-	#endif
-	#endif
+	//#ifdef QT_SVG_LIB
+	//#ifndef QT_NO_FILEDIALOG
+	//fileName = QFileDialog::getSaveFileName(
+	//this, "Export File Name", QString(),
+	//"SVG Documents (*.svg)");
+	//#endif
+	//if ( !fileName.isEmpty() ) {
+		//QSvgGenerator generator;
+		//generator.setFileName(fileName);
+		//generator.setSize(QSize(800, 600));
+		//rplot->print(generator);
+	//}
+	//#endif
+	//#endif
 }
