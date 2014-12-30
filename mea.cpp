@@ -20,6 +20,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 * MEA module: displays a raster plot of MEA activity
 */
 
+/*
+* TO-DO: make the circular buffer thread-safe (mutex)
+*        figure out how to link to the spike-detector module (and other modules in general)
+*/
+
 #include "mea.h"
 #include <math.h>
 #include <algorithm>
@@ -47,6 +52,7 @@ extern "C" Plugin::Object *createRTXIPlugin(void) {
 
 static DefaultGUIModel::variable_t vars[] = {
 	{ "Input", "MEA input", DefaultGUIModel::INPUT, },
+	{ "Event Trigger", "Trigger that indicates the spike time/event (=1)", DefaultGUIModel::INPUT, },
 	{ "Plot x-min (s)", "X-min for the MEA raster plot",
 		DefaultGUIModel::PARAMETER | DefaultGUIModel::DOUBLE, },
 	{ "Plot x-max (s)", "X-max for the MEA raster plot",
@@ -69,8 +75,7 @@ MEA::MEA(void) : DefaultGUIModel("MEA", ::vars, ::num_vars) {
 }
 
 void MEA::customizeGUI(void) {
-	// TO-DO: add button "Start raster plot" that will start a 4 Hz refresh rate
-	//        remove unnecessary buttons, etc
+	// TO-DO: remove unnecessary buttons, etc
 	//        fix log scaling on the plot
 	//        fix input boxes
 	QGridLayout *customLayout = DefaultGUIModel::getLayout();
@@ -88,10 +93,12 @@ void MEA::customizeGUI(void) {
 	QGroupBox *plotBox = new QGroupBox("MEA Raster Plot");
 	QHBoxLayout *plotBoxLayout = new QHBoxLayout;
 	plotBox->setLayout(plotBoxLayout);
+	QPushButton *startButton = new QPushButton("Start Raster Plot");
 	QPushButton *clearButton = new QPushButton("&Clear");
 	QPushButton *savePlotButton = new QPushButton("Save Screenshot");
 	QPushButton *printButton = new QPushButton("Print");
 	QPushButton *saveDataButton = new QPushButton("Save Data");
+	plotBoxLayout->addWidget(startButton);
 	plotBoxLayout->addWidget(clearButton);
 	plotBoxLayout->addWidget(savePlotButton);
 	plotBoxLayout->addWidget(printButton);
@@ -99,6 +106,7 @@ void MEA::customizeGUI(void) {
 	
 	rightLayout->addWidget(rplot);
 	
+	QObject::connect(startButton, SIGNAL(clicked()), this, SLOT(startPlot()));
 	QObject::connect(clearButton, SIGNAL(clicked()), this, SLOT(clearData()));
 	QObject::connect(savePlotButton, SIGNAL(clicked()), this, SLOT(exportSVG()));
 	QObject::connect(printButton, SIGNAL(clicked()), this, SLOT(print()));
@@ -114,10 +122,10 @@ void MEA::customizeGUI(void) {
 	DefaultGUIModel::modifyButton->setToolTip("Commit changes to parameter values");
 	DefaultGUIModel::unloadButton->setToolTip("Close module");
 
-	// TO-DO: max refresh rate should be 4 Hz
-	QTimer *timer2 = new QTimer(this);
-	timer2->start(2000);
-	QObject::connect(timer2, SIGNAL(timeout(void)), this, SLOT(refreshMEA(void)));
+	//// TO-DO: max refresh rate should be 4 Hz
+	//QTimer *timer2 = new QTimer(this);
+	//timer2->start(2000);
+	//QObject::connect(timer2, SIGNAL(timeout(void)), this, SLOT(refreshMEA(void)));
 
 	customLayout->addWidget(plotBox, 0, 0, 1, 2);
 	customLayout->addLayout(rightLayout, 1, 1);
@@ -131,11 +139,14 @@ void MEA::execute(void) {
 
 	// TO-DO: need to adjust things for multiple channels
 	// add to circular buffer for displaying on raster plot
-	spike.channelNum = 0; // TO-DO: pull from MEA input frame
-	spike.spktime = input(0); // TO-DO: update once input frame is more defined
-	meaBuffer.push_back(spike);
+	if (input(1) == 1) {
+		spike.channelNum = 0; // TO-DO: pull from MEA input frame
+		spike.spktime = input(0); // TO-DO: update once input frame is more defined
+		meaBuffer.push_back(spike);
 	
-	// TO-DO: keep track of number of spikes and reset to 0 in refreshMEA
+		// keep track of number of spikes and reset to 0 in refreshMEA
+		spkcount++;
+	}
 	
 	count++; // increment count to measure time
 	return;
@@ -178,6 +189,8 @@ void MEA::update(DefaultGUIModel::update_flags_t flag) {
 // custom functions
 void MEA::initParameters() {
 	// TO-DO: add init values for new variables (see header file)
+	i = 0;
+	spkcount = 0;
 	systime = 0;
 	dt = RT::System::getInstance()->getPeriod() * 1e-9; // s
 	meaBuffer.clear();
@@ -188,25 +201,42 @@ void MEA::initParameters() {
 	bookkeep();
 }
 
+// TO-DO: possibly delete this
 void MEA::bookkeep() {
-	// TO-DO: maybe update the x-axis here
+	
 }
 
 void MEA::refreshMEA() {
-	// TO-DO: update raster plot
-	//        step through buffer (starting from previous location using a file-scope iterator)
-	//        add each spike to rCurve with channelNum and spktime
-	//        is setSamples appropriate here? it probably overwrites old values on the plot
-	//        stop when number of spikes since last refresh has been reached (don't want to step through entire buffer)
-	//        reset number of spikes since last refresh
+	// TO-DO: need to test if buffer is empty
 	
-	//for {
-		//rCurve->setSamples(spike.channelNum[i], spike.spktime[i]);
-	//}
+	// update raster plot starting from previous location in circular buffer
+	time.resize(spkcount);
+	channels.resize(spkcount);
+	for (int m = 0; m < spkcount; m++) {
+		//rCurve->setSamples(&meaBuffer[i].channelNum, &meaBuffer[i].spktime, 8);
+		channels[m] = meaBuffer[i].channelNum;
+		time[m] = meaBuffer[i].spktime;
+		if (i == meaBuffer.size()) {
+			i = 0;
+		} else {
+			i++;
+		}
+	}
 	
+	rCurve->setSamples(time, channels); // TO-DO: need to test; this may overwrite previous points on the plot (but I think hold on is the default)
 	rplot->replot(); // TO-DO: is this the appropriate function?
-	emit setPlotRange(-plotxmin, plotxmax, plotymin, plotymax); // TO-DO: need to fix x-axis scale and labels
+	//emit setPlotRange(-plotxmin, plotxmax, plotymin, plotymax); // TO-DO: need to fix x-axis scale and labels
 	setState("Time (s)", systime);
+	
+	// reset spkcount
+	spkcount = 0;
+}
+
+void MEA::startPlot() {
+	// TO-DO: max refresh rate should be 4 Hz
+	QTimer *timer2 = new QTimer(this);
+	timer2->start(2000);
+	QObject::connect(timer2, SIGNAL(timeout(void)), this, SLOT(refreshMEA(void)));
 }
 
 // To-DO: fix or delete?

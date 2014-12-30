@@ -53,17 +53,19 @@ class MEA : public DefaultGUIModel {
 		long long count; // keep track of plug-in time
 		double dt;
 		double systime;
-		int spkcount; // TO-DO: spike count to keep track of number of steps to traverse through circular buffer per refresh (don't want to traverse through entire buffer if we can avoid it)
+		int spkcount; // spike count to keep track of number of steps to traverse through circular buffer per refresh
 		struct spikeData {
-			int channelNum;
+			double channelNum;
 			double spktime;
 			// TO-DO: spike waveform (vector?)
 		};
 		boost::circular_buffer<spikeData> meaBuffer; // buffer for all incoming data
-		// TO-DO: buffer iterator to keep track of starting point in circular buffer for each refresh
-		// TO-DO: reduce or increase this size if needed
 		int numChannels = 1; // TO-DO: change to 60 during actual testing
+		// TO-DO: adjust this size if needed
 		int n = 500; // constant size of meaBuffer for an individual channel (roughly 5 seconds of data)
+		double i;
+		QwtArray<double> channels;
+		QwtArray<double> time;
 		spikeData spike; // used for parsing the MEA input
 		double plotxmin; // units: time
 		double plotxmax;
@@ -84,6 +86,7 @@ class MEA : public DefaultGUIModel {
 	private slots:
 		// all custom slots
 		void refreshMEA(void);
+		void startPlot();
 		void clearData();
 		void saveData();
 		void print();
