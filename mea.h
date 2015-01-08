@@ -26,9 +26,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //#include <RTXIprintfilter.h>
 #include <QtGui>
 #include <cstdlib>
+#include <qpaintengine.h>
 #include <qwt_plot.h>
 #include <qwt_plot_curve.h>
+#include <qwt_plot_directpainter.h>
 #include <qwt_scale_engine.h>
+#include <qwt_symbol.h>
 #include <qwt_compat.h>
 
 class MEA : public DefaultGUIModel {
@@ -53,6 +56,8 @@ class MEA : public DefaultGUIModel {
 		long long count; // keep track of plug-in time
 		double dt;
 		double systime;
+		double prevtime;
+		int channelSim;
 		int spkcount; // spike count to keep track of number of steps to traverse through circular buffer per refresh
 		struct spikeData {
 			double channelNum;
@@ -60,12 +65,13 @@ class MEA : public DefaultGUIModel {
 			// TO-DO: spike waveform (vector?)
 		};
 		boost::circular_buffer<spikeData> meaBuffer; // buffer for all incoming data
-		int numChannels = 1; // TO-DO: change to 60 during actual testing
+		int numChannels = 60; // TO-DO: change to 60 during actual testing
 		// TO-DO: adjust this size if needed
-		int n = 500; // constant size of meaBuffer for an individual channel (roughly 5 seconds of data)
+		int n = 200; // constant size of meaBuffer for an individual channel (roughly 5 seconds of data)
 		double i;
 		QwtArray<double> channels;
 		QwtArray<double> time;
+		int index;
 		spikeData spike; // used for parsing the MEA input
 		double plotxmin; // units: time
 		double plotxmax;
@@ -75,6 +81,7 @@ class MEA : public DefaultGUIModel {
 		// QT components
 		BasicPlot *rplot;
 		QwtPlotCurve *rCurve;
+		QwtPlotDirectPainter *rDirectPainter;
 		
 		// MEA functions
 		void initParameters();

@@ -22,12 +22,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 /*
 * TO-DO: make the circular buffer thread-safe (mutex)
-*        figure out how to link to the spike-detector module (and other modules in general)
 */
 
 #include "mea.h"
-#include <math.h>
 #include <algorithm>
+#include <math.h>
 #include <numeric>
 #include <time.h>
 
@@ -84,10 +83,12 @@ void MEA::customizeGUI(void) {
 	rplot = new BasicPlot(this);
 	rCurve = new QwtPlotCurve("Curve 1");
 	rCurve->setStyle(QwtPlotCurve::NoCurve);
+	rCurve->setSymbol(new QwtSymbol(QwtSymbol::VLine, Qt::NoBrush, QPen(Qt::white), QSize(4,4)));
 	rCurve->attach(rplot);
 	rCurve->setPen(QColor(Qt::white));
-	rplot->setAxisScaleEngine(QwtPlot::xBottom, new QwtLogScaleEngine);
-	rplot->setAxisScale(QwtPlot::xBottom, 0.1, 100);
+	//rplot->setAxisScaleEngine(QwtPlot::xBottom, new QwtLogScaleEngine);
+	//rplot->setAxisScale(QwtPlot::xBottom, 0.1, 100);
+	////rplot->setAutoReplot(false);
 	
 	QVBoxLayout *rightLayout = new QVBoxLayout;
 	QGroupBox *plotBox = new QGroupBox("MEA Raster Plot");
@@ -137,11 +138,24 @@ MEA::~MEA(void) {}
 void MEA::execute(void) {
 	systime = count * dt; // current time
 
+	// QWT test code -- delete eventually
+	if (systime - prevtime > 0.001) { // 1 kHz combined firing rate (try to ramp this up to see the limits of QWT)
+		prevtime = systime; // update prevtime
+		channelSim = rand() % 60;
+		spike.channelNum = channelSim;
+		spike.spktime = systime;
+		meaBuffer.push_back(spike);
+		
+		spkcount++;
+		std::cout << "Spike on channel " << channelSim << " at " << systime << " seconds" << std::endl;
+		std::cout << "Current spike count: " << spkcount << std::endl;
+	}
+
 	// TO-DO: need to adjust things for multiple channels
 	// add to circular buffer for displaying on raster plot
 	if (input(1) == 1) {
 		spike.channelNum = 0; // TO-DO: pull from MEA input frame
-		spike.spktime = input(0); // TO-DO: update once input frame is more defined
+		spike.spktime = systime; // TO-DO: update once input frame is more defined (may need to create MEA spike detector module)
 		meaBuffer.push_back(spike);
 	
 		// keep track of number of spikes and reset to 0 in refreshMEA
@@ -190,8 +204,10 @@ void MEA::update(DefaultGUIModel::update_flags_t flag) {
 void MEA::initParameters() {
 	// TO-DO: add init values for new variables (see header file)
 	i = 0;
+	index = 0;
 	spkcount = 0;
 	systime = 0;
+	prevtime = 0;
 	dt = RT::System::getInstance()->getPeriod() * 1e-9; // s
 	meaBuffer.clear();
 	assert(meaBuffer.size() == 0);
@@ -210,21 +226,29 @@ void MEA::refreshMEA() {
 	// TO-DO: need to test if buffer is empty
 	
 	// update raster plot starting from previous location in circular buffer
+	//time = new double[spkcount];
+	//channels = new double[spkcount];
 	time.resize(spkcount);
 	channels.resize(spkcount);
 	for (int m = 0; m < spkcount; m++) {
 		//rCurve->setSamples(&meaBuffer[i].channelNum, &meaBuffer[i].spktime, 8);
 		channels[m] = meaBuffer[i].channelNum;
 		time[m] = meaBuffer[i].spktime;
-		if (i == meaBuffer.size()) {
+		if (i == meaBuffer.size() - 1) {
 			i = 0;
 		} else {
 			i++;
 		}
 	}
 	
-	rCurve->setSamples(time, channels); // TO-DO: need to test; this may overwrite previous points on the plot (but I think hold on is the default)
-	rplot->replot(); // TO-DO: is this the appropriate function?
+	rCurve->setSamples(time, channels);//, n);
+	rplot->replot();
+	emit setPlotRange(plotxmin, plotxmax, plotymin, plotymax);
+	
+	//rCurve->setSamples(time, channels); // TO-DO: need to test; this may overwrite previous points on the plot (but I think hold on is the default)
+	//rCurve->attach(rplot);
+	//rplot->replot(); // TO-DO: is this the appropriate function?
+	//rplot->show();
 	//emit setPlotRange(-plotxmin, plotxmax, plotymin, plotymax); // TO-DO: need to fix x-axis scale and labels
 	setState("Time (s)", systime);
 	
@@ -234,6 +258,7 @@ void MEA::refreshMEA() {
 
 void MEA::startPlot() {
 	// TO-DO: max refresh rate should be 4 Hz
+	//        only allow this to run once?
 	QTimer *timer2 = new QTimer(this);
 	timer2->start(2000);
 	QObject::connect(timer2, SIGNAL(timeout(void)), this, SLOT(refreshMEA(void)));
