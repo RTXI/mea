@@ -67,7 +67,8 @@ class MEA : public DefaultGUIModel {
 		boost::circular_buffer<spikeData> meaBuffer; // buffer for all incoming data
 		int numChannels = 60; // TO-DO: change to 60 during actual testing
 		// TO-DO: adjust this size if needed
-		int n = 200; // constant size of meaBuffer for an individual channel (roughly 5 seconds of data)
+		int n = 200;
+		int displayTime = 10*60; // change this to set the number of minutes of displayed raster data
 		double i;
 		QwtArray<double> channels;
 		QwtArray<double> time;

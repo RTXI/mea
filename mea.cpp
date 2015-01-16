@@ -20,10 +20,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 * MEA module: displays a raster plot of MEA activity
 */
 
-/*
-* TO-DO: make the circular buffer thread-safe (mutex)
-*/
-
 #include "mea.h"
 #include <algorithm>
 #include <math.h>
@@ -79,7 +75,6 @@ void MEA::customizeGUI(void) {
 	//        fix input boxes
 	QGridLayout *customLayout = DefaultGUIModel::getLayout();
 	
-	// Need to adjust these for the raster plot
 	rplot = new BasicPlot(this);
 	rCurve = new QwtPlotCurve("Curve 1");
 	rCurve->setStyle(QwtPlotCurve::NoCurve);
@@ -88,7 +83,6 @@ void MEA::customizeGUI(void) {
 	rCurve->setPen(QColor(Qt::white));
 	//rplot->setAxisScaleEngine(QwtPlot::xBottom, new QwtLogScaleEngine);
 	//rplot->setAxisScale(QwtPlot::xBottom, 0.1, 100);
-	////rplot->setAutoReplot(false);
 	
 	QVBoxLayout *rightLayout = new QVBoxLayout;
 	QGroupBox *plotBox = new QGroupBox("MEA Raster Plot");
@@ -123,10 +117,9 @@ void MEA::customizeGUI(void) {
 	DefaultGUIModel::modifyButton->setToolTip("Commit changes to parameter values");
 	DefaultGUIModel::unloadButton->setToolTip("Close module");
 
-	//// TO-DO: max refresh rate should be 4 Hz
-	//QTimer *timer2 = new QTimer(this);
-	//timer2->start(2000);
-	//QObject::connect(timer2, SIGNAL(timeout(void)), this, SLOT(refreshMEA(void)));
+	QTimer *timer2 = new QTimer(this);
+	timer2->start(2000); // max refresh rate = 4 Hz
+	QObject::connect(timer2, SIGNAL(timeout(void)), this, SLOT(refreshMEA(void)));
 
 	customLayout->addWidget(plotBox, 0, 0, 1, 2);
 	customLayout->addLayout(rightLayout, 1, 1);
@@ -147,11 +140,11 @@ void MEA::execute(void) {
 		meaBuffer.push_back(spike);
 		
 		spkcount++;
-		std::cout << "Spike on channel " << channelSim << " at " << systime << " seconds" << std::endl;
-		std::cout << "Current spike count: " << spkcount << std::endl;
+		//std::cout << "Spike on channel " << channelSim << " at " << systime << " seconds" << std::endl;
+		//std::cout << "Current spike count: " << spkcount << std::endl;
 	}
 
-	// TO-DO: need to adjust things for multiple channels
+	// TO-DO: change to atomic circular buffer
 	// add to circular buffer for displaying on raster plot
 	if (input(1) == 1) {
 		spike.channelNum = 0; // TO-DO: pull from MEA input frame
@@ -208,11 +201,11 @@ void MEA::initParameters() {
 	spkcount = 0;
 	systime = 0;
 	prevtime = 0;
-	dt = RT::System::getInstance()->getPeriod() * 1e-9; // s
+	dt = RT::System::getInstance()->getPeriod() * 1e-9;
 	meaBuffer.clear();
 	assert(meaBuffer.size() == 0);
-	meaBuffer.rset_capacity(n * numChannels); // set default size of circular buffer
-	plotxmin = 0; // units: seconds
+	meaBuffer.rset_capacity(n * numChannels);
+	plotxmin = 0;
 	plotxmax = 10;
 	bookkeep();
 }
@@ -223,45 +216,37 @@ void MEA::bookkeep() {
 }
 
 void MEA::refreshMEA() {
-	// TO-DO: need to test if buffer is empty
-	
-	// update raster plot starting from previous location in circular buffer
-	//time = new double[spkcount];
-	//channels = new double[spkcount];
-	time.resize(spkcount);
-	channels.resize(spkcount);
-	for (int m = 0; m < spkcount; m++) {
-		//rCurve->setSamples(&meaBuffer[i].channelNum, &meaBuffer[i].spktime, 8);
-		channels[m] = meaBuffer[i].channelNum;
-		time[m] = meaBuffer[i].spktime;
-		if (i == meaBuffer.size() - 1) {
-			i = 0;
+	if (meaBuffer.size() != 0) {
+		// add new spikes
+		i = meaBuffer.size() - 1;
+		for (int m = 0; m < spkcount; m++) {
+			time.push_back(meaBuffer[i].spktime);
+			channels.push_back(meaBuffer[i].channelNum);
+			i--;
+		}
+		// delete old spikes
+		while (time.front() < systime - displayTime) {
+			time.pop_front();
+			channels.pop_front();
+		}
+		// replot (TO-DO: test the limits of this)
+		rCurve->setSamples(time, channels);
+		rplot->replot();
+		if (systime <= displayTime) {
+			emit setPlotRange(0, systime, plotymin, plotymax);
 		} else {
-			i++;
+			emit setPlotRange(systime-displayTime, systime, plotymin, plotymax);
 		}
 	}
-	
-	rCurve->setSamples(time, channels);//, n);
-	rplot->replot();
-	emit setPlotRange(plotxmin, plotxmax, plotymin, plotymax);
-	
-	//rCurve->setSamples(time, channels); // TO-DO: need to test; this may overwrite previous points on the plot (but I think hold on is the default)
-	//rCurve->attach(rplot);
-	//rplot->replot(); // TO-DO: is this the appropriate function?
-	//rplot->show();
-	//emit setPlotRange(-plotxmin, plotxmax, plotymin, plotymax); // TO-DO: need to fix x-axis scale and labels
 	setState("Time (s)", systime);
-	
-	// reset spkcount
 	spkcount = 0;
 }
 
 void MEA::startPlot() {
-	// TO-DO: max refresh rate should be 4 Hz
-	//        only allow this to run once?
-	QTimer *timer2 = new QTimer(this);
-	timer2->start(2000);
-	QObject::connect(timer2, SIGNAL(timeout(void)), this, SLOT(refreshMEA(void)));
+	// max refresh rate = 4 Hz
+	//QTimer *timer2 = new QTimer(this);
+	//timer2->start(2000);
+	//QObject::connect(timer2, SIGNAL(timeout(void)), this, SLOT(refreshMEA(void)));
 }
 
 // To-DO: fix or delete?
@@ -276,7 +261,7 @@ void MEA::clearData() {
 	//rplot->replot();
 }
 
-// TO-DO: change STA stuff to raster plot
+// TO-DO: fix or delete? data is already saved via Data Recorder
 void MEA::saveData() {
 	//QFileDialog* fd = new QFileDialog(this);//, "Save File As", TRUE);
 	//fd->setFileMode(QFileDialog::AnyFile);
@@ -302,35 +287,35 @@ void MEA::saveData() {
 	//}
 }
 
-// TO-DO: test and fix if necessary
+// TO-DO: fix or delete?
 bool MEA::OpenFile(QString FName) {
-	dataFile.setFileName(FName);
-	if (dataFile.exists()) {
-		switch (QMessageBox::warning(this, "Event-triggered Average", tr(
-				"This file already exists: %1.\n").arg(FName), "Overwrite", "Append",
-				"Cancel", 0, 2)) {
-			case 0: // overwrite
-				dataFile.remove();
-				if (!dataFile.open(QIODevice::Unbuffered | QIODevice::WriteOnly)) return false;
-				break;
+	//dataFile.setFileName(FName);
+	//if (dataFile.exists()) {
+		//switch (QMessageBox::warning(this, "Event-triggered Average", tr(
+				//"This file already exists: %1.\n").arg(FName), "Overwrite", "Append",
+				//"Cancel", 0, 2)) {
+			//case 0: // overwrite
+				//dataFile.remove();
+				//if (!dataFile.open(QIODevice::Unbuffered | QIODevice::WriteOnly)) return false;
+				//break;
 			
-			case 1: // append
-				if (!dataFile.open(QIODevice::Unbuffered | QIODevice::Append )) return false;
-				break;
+			//case 1: // append
+				//if (!dataFile.open(QIODevice::Unbuffered | QIODevice::Append )) return false;
+				//break;
 		
-			case 2: // cancel
-				return false;
-				break;
-		}
-	} else {
-		if (!dataFile.open(QIODevice::Unbuffered | QIODevice::WriteOnly))	return false;
-	}
-	stream.setDevice(&dataFile);
-	printf("File opened: %s\n", FName.toUtf8().constData());
+			//case 2: // cancel
+				//return false;
+				//break;
+		//}
+	//} else {
+		//if (!dataFile.open(QIODevice::Unbuffered | QIODevice::WriteOnly))	return false;
+	//}
+	//stream.setDevice(&dataFile);
+	//printf("File opened: %s\n", FName.toUtf8().constData());
 	return true;
 }
 
-// TO-DO: fix? this is commented out in STA module
+// TO-DO: fix or delete? this is commented out in STA module
 void MEA::print() {
 /*
 	#if 1
