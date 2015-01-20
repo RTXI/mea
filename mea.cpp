@@ -48,10 +48,6 @@ extern "C" Plugin::Object *createRTXIPlugin(void) {
 static DefaultGUIModel::variable_t vars[] = {
 	{ "Input", "MEA input", DefaultGUIModel::INPUT, },
 	{ "Event Trigger", "Trigger that indicates the spike time/event (=1)", DefaultGUIModel::INPUT, },
-	{ "Plot x-min (s)", "X-min for the MEA raster plot",
-		DefaultGUIModel::PARAMETER | DefaultGUIModel::DOUBLE, },
-	{ "Plot x-max (s)", "X-max for the MEA raster plot",
-		DefaultGUIModel::PARAMETER | DefaultGUIModel::DOUBLE, },
 	{ "Time (s)", "Time (s)", DefaultGUIModel::STATE, },
 };
 
@@ -83,33 +79,25 @@ void MEA::customizeGUI(void) {
 	rCurve->setPen(QColor(Qt::white));
 	//rplot->setAxisScaleEngine(QwtPlot::xBottom, new QwtLogScaleEngine);
 	//rplot->setAxisScale(QwtPlot::xBottom, 0.1, 100);
+	//rplot->axisScaleEngine(QwtPlot::xBottom)->setAttribute(QwtLogScaleEngine::Floating, true);
+	//rplot->axisScaleEngine(QwtPlot::xBottom)->setAttribute(QwtLogScaleEngine::Inverted, true);
+	//rplot->replot();
 	
 	QVBoxLayout *rightLayout = new QVBoxLayout;
 	QGroupBox *plotBox = new QGroupBox("MEA Raster Plot");
 	QHBoxLayout *plotBoxLayout = new QHBoxLayout;
 	plotBox->setLayout(plotBoxLayout);
-	QPushButton *startButton = new QPushButton("Start Raster Plot");
-	QPushButton *clearButton = new QPushButton("&Clear");
 	QPushButton *savePlotButton = new QPushButton("Save Screenshot");
-	QPushButton *printButton = new QPushButton("Print");
-	QPushButton *saveDataButton = new QPushButton("Save Data");
-	plotBoxLayout->addWidget(startButton);
-	plotBoxLayout->addWidget(clearButton);
+	QPushButton *clearButton = new QPushButton("Clear Plot");
 	plotBoxLayout->addWidget(savePlotButton);
-	plotBoxLayout->addWidget(printButton);
-	plotBoxLayout->addWidget(saveDataButton);
-	
+	plotBoxLayout->addWidget(clearButton);
 	rightLayout->addWidget(rplot);
 	
-	QObject::connect(startButton, SIGNAL(clicked()), this, SLOT(startPlot()));
 	QObject::connect(clearButton, SIGNAL(clicked()), this, SLOT(clearData()));
 	QObject::connect(savePlotButton, SIGNAL(clicked()), this, SLOT(exportSVG()));
-	QObject::connect(printButton, SIGNAL(clicked()), this, SLOT(print()));
-	QObject::connect(saveDataButton, SIGNAL(clicked()), this, SLOT(saveData()));
 	QObject::connect(DefaultGUIModel::pauseButton, SIGNAL(toggled(bool)),this,SLOT(pause(bool)));
+	QObject::connect(DefaultGUIModel::pauseButton, SIGNAL(toggled(bool)),clearButton,SLOT(setEnabled(bool)));
 	QObject::connect(DefaultGUIModel::pauseButton, SIGNAL(toggled(bool)),savePlotButton,SLOT(setEnabled(bool)));
-	QObject::connect(DefaultGUIModel::pauseButton, SIGNAL(toggled(bool)),printButton,SLOT(setEnabled(bool)));
-	QObject::connect(DefaultGUIModel::pauseButton, SIGNAL(toggled(bool)),saveDataButton,SLOT(setEnabled(bool)));
 	QObject::connect(DefaultGUIModel::pauseButton, SIGNAL(toggled(bool)),DefaultGUIModel::modifyButton,SLOT(setEnabled(bool)));
 	QObject::connect(this, SIGNAL(setPlotRange(double, double, double, double)), rplot, SLOT(setAxes(double, double, double, double)));
 	
@@ -132,26 +120,23 @@ void MEA::execute(void) {
 	systime = count * dt; // current time
 
 	// QWT test code -- delete eventually
-	if (systime - prevtime > 0.001) { // 1 kHz combined firing rate (try to ramp this up to see the limits of QWT)
-		prevtime = systime; // update prevtime
+	if (systime - prevtime > 0.01) { // combined firing rate (try to ramp this up to see the limits of QWT)
+		prevtime = systime;
 		channelSim = rand() % 60;
 		spike.channelNum = channelSim;
 		spike.spktime = systime;
 		meaBuffer.push_back(spike);
 		
 		spkcount++;
-		//std::cout << "Spike on channel " << channelSim << " at " << systime << " seconds" << std::endl;
-		//std::cout << "Current spike count: " << spkcount << std::endl;
 	}
 
 	// TO-DO: change to atomic circular buffer
-	// add to circular buffer for displaying on raster plot
+	// add spikes to circular buffer
 	if (input(1) == 1) {
 		spike.channelNum = 0; // TO-DO: pull from MEA input frame
 		spike.spktime = systime; // TO-DO: update once input frame is more defined (may need to create MEA spike detector module)
 		meaBuffer.push_back(spike);
 	
-		// keep track of number of spikes and reset to 0 in refreshMEA
 		spkcount++;
 	}
 	
@@ -162,14 +147,10 @@ void MEA::execute(void) {
 void MEA::update(DefaultGUIModel::update_flags_t flag) {
 	switch (flag) {
 		case INIT:
-			setParameter("Plot x-min (s)", QString::number(plotxmin));
-			setParameter("Plot x-max (s)", QString::number(plotxmax));
 			setState("Time (s)", systime);
 			break;
 		
 		case MODIFY:
-			plotxmin = getParameter("Plot x-min (s)").toDouble();
-			plotxmax = getParameter("Plot x-max (s)").toDouble();
 			bookkeep();
 			break;
 
@@ -196,17 +177,16 @@ void MEA::update(DefaultGUIModel::update_flags_t flag) {
 // custom functions
 void MEA::initParameters() {
 	// TO-DO: add init values for new variables (see header file)
-	i = 0;
-	index = 0;
+	count = 0;
+	dt = RT::System::getInstance()->getPeriod() * 1e-9;
+	bufferIndex = 0;
+	prevtime = 0;
 	spkcount = 0;
 	systime = 0;
-	prevtime = 0;
-	dt = RT::System::getInstance()->getPeriod() * 1e-9;
+	
 	meaBuffer.clear();
 	assert(meaBuffer.size() == 0);
 	meaBuffer.rset_capacity(n * numChannels);
-	plotxmin = 0;
-	plotxmax = 10;
 	bookkeep();
 }
 
@@ -218,11 +198,11 @@ void MEA::bookkeep() {
 void MEA::refreshMEA() {
 	if (meaBuffer.size() != 0) {
 		// add new spikes
-		i = meaBuffer.size() - 1;
+		bufferIndex = meaBuffer.size() - 1;
 		for (int m = 0; m < spkcount; m++) {
-			time.push_back(meaBuffer[i].spktime);
-			channels.push_back(meaBuffer[i].channelNum);
-			i--;
+			time.push_back(meaBuffer[bufferIndex].spktime);
+			channels.push_back(meaBuffer[bufferIndex].channelNum);
+			bufferIndex--;
 		}
 		// delete old spikes
 		while (time.front() < systime - displayTime) {
@@ -234,165 +214,58 @@ void MEA::refreshMEA() {
 		rplot->replot();
 		if (systime <= displayTime) {
 			emit setPlotRange(0, systime, plotymin, plotymax);
+			//rplot->setAxisScale(QwtPlot::xBottom, 0.01, systime);
 		} else {
 			emit setPlotRange(systime-displayTime, systime, plotymin, plotymax);
+			//rplot->setAxisScale(QwtPlot::xBottom, systime-displayTime, systime);
 		}
 	}
 	setState("Time (s)", systime);
 	spkcount = 0;
 }
 
-void MEA::startPlot() {
-	// max refresh rate = 4 Hz
-	//QTimer *timer2 = new QTimer(this);
-	//timer2->start(2000);
-	//QObject::connect(timer2, SIGNAL(timeout(void)), this, SLOT(refreshMEA(void)));
-}
-
-// To-DO: fix or delete?
-void MEA::clearData() {
-	//eventcount = 0;
-	//for (int i = 0; i < n; i++) {
-		//meaBuffer.push_back(0);
-	//}
-	//triggered = 0;
-	
-	//rCurve->setSamples(time, staavg);//, n);
-	//rplot->replot();
-}
-
-// TO-DO: fix or delete? data is already saved via Data Recorder
-void MEA::saveData() {
-	//QFileDialog* fd = new QFileDialog(this);//, "Save File As", TRUE);
-	//fd->setFileMode(QFileDialog::AnyFile);
-	//fd->setViewMode(QFileDialog::Detail);
-	//QStringList fileList;
-	//QString fileName;
-	//if (fd->exec() == QDialog::Accepted) {
-		//fileList = fd->selectedFiles();
-		//if (!fileList.isEmpty()) fileName = fileList[0];
+// TO-DO: not currently working
+void MEA::exportSVG() {
+	QString fileName = "MEA_raster.svg";
 		
-		//if (OpenFile(fileName)) {
-			//for (int i = 0; i < n; i++) {
-				//stream << (double) time[i] << " " << (double) staavg[i] << "\n";
-			//}
-			//dataFile.close();
-			//printf("File closed.\n");
-		//} else {
-			//QMessageBox::information(this,
-			//"Event-triggered Average: Save Average",
-			//"There was an error writing to this file. You can view\n"
-			//"the values that should be plotted in the terminal.\n");
-		//}
-	//}
-}
-
-// TO-DO: fix or delete?
-bool MEA::OpenFile(QString FName) {
-	//dataFile.setFileName(FName);
-	//if (dataFile.exists()) {
-		//switch (QMessageBox::warning(this, "Event-triggered Average", tr(
-				//"This file already exists: %1.\n").arg(FName), "Overwrite", "Append",
-				//"Cancel", 0, 2)) {
-			//case 0: // overwrite
-				//dataFile.remove();
-				//if (!dataFile.open(QIODevice::Unbuffered | QIODevice::WriteOnly)) return false;
-				//break;
-			
-			//case 1: // append
-				//if (!dataFile.open(QIODevice::Unbuffered | QIODevice::Append )) return false;
-				//break;
-		
-			//case 2: // cancel
-				//return false;
-				//break;
-		//}
-	//} else {
-		//if (!dataFile.open(QIODevice::Unbuffered | QIODevice::WriteOnly))	return false;
-	//}
-	//stream.setDevice(&dataFile);
-	//printf("File opened: %s\n", FName.toUtf8().constData());
-	return true;
-}
-
-// TO-DO: fix or delete? this is commented out in STA module
-void MEA::print() {
-/*
-	#if 1
-	QPrinter printer;
-	#else
-	QPrinter printer(QPrinter::HighResolution);
 	#if QT_VERSION < 0x040000
-	printer.setOutputToFile(true);
-	printer.setOutputFileName("/tmp/STA.ps");
-	printer.setColorMode(QPrinter::Color);
-	#else
-	printer.setOutputFileName("/tmp/STA.pdf");
-	#endif
-	#endif
 	
-	QString docName = rplot->title().text();
-	if (!docName.isEmpty())
-		{
-		docName.replace(QRegExp(QString::fromLatin1("\n")), tr(" -- "));
-		printer.setDocName(docName);
+	#ifndef QT_NO_FILEDIALOG
+	fileName = QFileDialog::getSaveFileName("MEA_raster.svg", "SVG Documents (*.svg)", this);
+	#endif
+	if (!fileName.isEmpty()) {
+		// enable workaround for Qt3 misalignments
+		QwtPainter::setSVGMode(true);
+		QPicture picture;
+		QPainter p(&picture);
+		rplot->print(&p, QRect(0, 0, 800, 600));
+		p.end();
+		picture.save(fileName, "svg");
 	}
 	
-	printer.setCreator("RTXI");
-	printer.setOrientation(QPrinter::Landscape);
+	#elif QT_VERSION >= 0x040300
 	
-	#if QT_VERSION >= 0x040000
-	QPrintDialog dialog(&printer);
-	if ( dialog.exec() ) {
-		#else
-		if (printer.setup()) {
-			#endif
-			RTXIPrintFilter filter;
-			if (printer.colorMode() == QPrinter::GrayScale) {
-				int options = QwtPlotPrintFilter::PrintAll;
-				filter.setOptions(options);
-				filter.color(QColor(29, 100, 141),
-				QwtPlotPrintFilter::CanvasBackground);
-				filter.color(Qt::white, QwtPlotPrintFilter::CurveSymbol);
-			}
-			rplot->print(printer, filter);
-		}
-*/
+	#ifdef QT_SVG_LIB
+	#ifndef QT_NO_FILEDIALOG
+	fileName = QFileDialog::getSaveFileName(
+	this, "Export File Name", QString(),
+	"SVG Documents (*.svg)");
+	#endif
+	if ( !fileName.isEmpty() ) {
+		QSvgGenerator generator;
+		generator.setFileName(fileName);
+		generator.setSize(QSize(800, 600));
+		rplot->print(generator);
+	}
+	#endif
+	#endif
 }
 
-// TO-DO: test and fix if necessary
-void MEA::exportSVG() {
-	//QString fileName = "STA.svg";
-		
-	//#if QT_VERSION < 0x040000
+void MEA::clearData() {
+	meaBuffer.clear();
+	time.clear();
+	channels.clear();
 	
-	//#ifndef QT_NO_FILEDIALOG
-	//fileName = QFileDialog::getSaveFileName("STA.svg", "SVG Documents (*.svg)", this);
-	//#endif
-	//if (!fileName.isEmpty()) {
-		//// enable workaround for Qt3 misalignments
-		//QwtPainter::setSVGMode(true);
-		//QPicture picture;
-		//QPainter p(&picture);
-		//rplot->print(&p, QRect(0, 0, 800, 600));
-		//p.end();
-		//picture.save(fileName, "svg");
-	//}
-	
-	//#elif QT_VERSION >= 0x040300
-	
-	//#ifdef QT_SVG_LIB
-	//#ifndef QT_NO_FILEDIALOG
-	//fileName = QFileDialog::getSaveFileName(
-	//this, "Export File Name", QString(),
-	//"SVG Documents (*.svg)");
-	//#endif
-	//if ( !fileName.isEmpty() ) {
-		//QSvgGenerator generator;
-		//generator.setFileName(fileName);
-		//generator.setSize(QSize(800, 600));
-		//rplot->print(generator);
-	//}
-	//#endif
-	//#endif
+	rCurve->setSamples(time, channels);
+	rplot->replot();
 }

@@ -26,10 +26,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //#include <RTXIprintfilter.h>
 #include <QtGui>
 #include <cstdlib>
-#include <qpaintengine.h>
 #include <qwt_plot.h>
 #include <qwt_plot_curve.h>
-#include <qwt_plot_directpainter.h>
 #include <qwt_scale_engine.h>
 #include <qwt_symbol.h>
 #include <qwt_compat.h>
@@ -52,51 +50,41 @@ class MEA : public DefaultGUIModel {
 		virtual void update(DefaultGUIModel::update_flags_t);
 	
 	private:
+		// testing variables (delete eventually)
+		double prevtime;
+		int channelSim;
 		// inputs, states, related constants
 		long long count; // keep track of plug-in time
 		double dt;
 		double systime;
-		double prevtime;
-		int channelSim;
-		int spkcount; // spike count to keep track of number of steps to traverse through circular buffer per refresh
+		int spkcount; // spike count since last refresh
 		struct spikeData {
 			double channelNum;
 			double spktime;
 			// TO-DO: spike waveform (vector?)
 		};
+		spikeData spike;
 		boost::circular_buffer<spikeData> meaBuffer; // buffer for all incoming data
+		int n = 200; // maximum spikes per second for one channel
 		int numChannels = 60; // TO-DO: change to 60 during actual testing
-		// TO-DO: adjust this size if needed
-		int n = 200;
 		int displayTime = 10*60; // change this to set the number of minutes of displayed raster data
-		double i;
+		double bufferIndex;
 		QwtArray<double> channels;
 		QwtArray<double> time;
-		int index;
-		spikeData spike; // used for parsing the MEA input
-		double plotxmin; // units: time
-		double plotxmax;
-		double plotymin = 0; // units: MEA channel number
-		double plotymax = 59; // TO-DO: set to (numChannels-1)
+		double plotymin = 0;
+		double plotymax = numChannels-1;
 		
 		// QT components
 		BasicPlot *rplot;
 		QwtPlotCurve *rCurve;
-		QwtPlotDirectPainter *rDirectPainter;
 		
 		// MEA functions
 		void initParameters();
 		void bookkeep();
-		bool OpenFile(QString);
-		QFile dataFile;
-		QTextStream stream;
 	
 	private slots:
 		// all custom slots
 		void refreshMEA(void);
-		void startPlot();
 		void clearData();
-		void saveData();
-		void print();
 		void exportSVG();
 };
