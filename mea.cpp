@@ -72,16 +72,13 @@ void MEA::customizeGUI(void) {
 	QGridLayout *customLayout = DefaultGUIModel::getLayout();
 	
 	rplot = new BasicPlot(this);
+    rplot->setAxisScaleDraw(QwtPlot::xBottom, new TimeScaleDraw(QTime(0,0,0,0)));
+    rplot->axisScaleEngine(QwtPlot::xBottom)->setAttribute(QwtScaleEngine::Floating, true);
 	rCurve = new QwtPlotCurve("Curve 1");
 	rCurve->setStyle(QwtPlotCurve::NoCurve);
 	rCurve->setSymbol(new QwtSymbol(QwtSymbol::VLine, Qt::NoBrush, QPen(Qt::white), QSize(4,4)));
 	rCurve->attach(rplot);
 	rCurve->setPen(QColor(Qt::white));
-	//rplot->setAxisScaleEngine(QwtPlot::xBottom, new QwtLogScaleEngine);
-	//rplot->setAxisScale(QwtPlot::xBottom, 0.1, 100);
-	//rplot->axisScaleEngine(QwtPlot::xBottom)->setAttribute(QwtLogScaleEngine::Floating, true);
-	//rplot->axisScaleEngine(QwtPlot::xBottom)->setAttribute(QwtLogScaleEngine::Inverted, true);
-	//rplot->replot();
 	
 	QVBoxLayout *rightLayout = new QVBoxLayout;
 	QGroupBox *plotBox = new QGroupBox("MEA Raster Plot");
@@ -177,12 +174,12 @@ void MEA::update(DefaultGUIModel::update_flags_t flag) {
 // custom functions
 void MEA::initParameters() {
 	// TO-DO: add init values for new variables (see header file)
-	count = 0;
+	systime = 0;
 	dt = RT::System::getInstance()->getPeriod() * 1e-9;
+	count = 0;
 	bufferIndex = 0;
 	prevtime = 0;
 	spkcount = 0;
-	systime = 0;
 	
 	meaBuffer.clear();
 	assert(meaBuffer.size() == 0);

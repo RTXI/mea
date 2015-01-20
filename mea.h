@@ -29,8 +29,26 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <qwt_plot.h>
 #include <qwt_plot_curve.h>
 #include <qwt_scale_engine.h>
+#include <qwt_date_scale_engine.h>
+#include <qwt_date_scale_draw.h>
 #include <qwt_symbol.h>
 #include <qwt_compat.h>
+
+class TimeScaleDraw: public QwtScaleDraw
+{
+public:
+    TimeScaleDraw(const QTime &base):
+        baseTime(base)
+    {
+    }
+    virtual QwtText label(double v) const
+    {
+        QTime upTime = baseTime.addSecs((int)v);
+        return upTime.toString();
+    }
+private:
+    QTime baseTime;
+};
 
 class MEA : public DefaultGUIModel {
 	Q_OBJECT
