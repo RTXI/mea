@@ -48,6 +48,7 @@ extern "C" Plugin::Object *createRTXIPlugin(void) {
 static DefaultGUIModel::variable_t vars[] = {
 	{ "Input", "MEA input", DefaultGUIModel::INPUT, },
 	{ "Event Trigger", "Trigger that indicates the spike time/event (=1)", DefaultGUIModel::INPUT, },
+	{ "Refresh Rate (s)", "Raster plot refresh rate", DefaultGUIModel::PARAMETER, },
 	{ "Time (s)", "Time (s)", DefaultGUIModel::STATE, },
 };
 
@@ -66,14 +67,12 @@ MEA::MEA(void) : DefaultGUIModel("MEA", ::vars, ::num_vars) {
 }
 
 void MEA::customizeGUI(void) {
-	// TO-DO: remove unnecessary buttons, etc
-	//        fix log scaling on the plot
-	//        fix input boxes
+	// TO-DO: allow plot to scale with module window
+	//        inputs/outputs
 	QGridLayout *customLayout = DefaultGUIModel::getLayout();
 	
 	rplot = new BasicPlot(this);
     rplot->setAxisScaleDraw(QwtPlot::xBottom, new TimeScaleDraw(QTime(0,0,0,0)));
-    rplot->axisScaleEngine(QwtPlot::xBottom)->setAttribute(QwtScaleEngine::Floating, true);
 	rCurve = new QwtPlotCurve("Curve 1");
 	rCurve->setStyle(QwtPlotCurve::NoCurve);
 	rCurve->setSymbol(new QwtSymbol(QwtSymbol::VLine, Qt::NoBrush, QPen(Qt::white), QSize(4,4)));
@@ -102,10 +101,10 @@ void MEA::customizeGUI(void) {
 	DefaultGUIModel::modifyButton->setToolTip("Commit changes to parameter values");
 	DefaultGUIModel::unloadButton->setToolTip("Close module");
 
-	QTimer *timer2 = new QTimer(this);
-	timer2->start(2000); // max refresh rate = 4 Hz
+	timer2->start(refreshRate * 1000); // max refresh rate = 4 Hz
 	QObject::connect(timer2, SIGNAL(timeout(void)), this, SLOT(refreshMEA(void)));
 
+	emit setPlotRange(0, systime, plotymin, plotymax);
 	customLayout->addWidget(plotBox, 0, 0, 1, 2);
 	customLayout->addLayout(rightLayout, 1, 1);
 	setLayout(customLayout);
@@ -117,20 +116,20 @@ void MEA::execute(void) {
 	systime = count * dt; // current time
 
 	// QWT test code -- delete eventually
-	if (systime - prevtime > 0.01) { // combined firing rate (try to ramp this up to see the limits of QWT)
-		prevtime = systime;
-		channelSim = rand() % 60;
-		spike.channelNum = channelSim;
-		spike.spktime = systime;
-		meaBuffer.push_back(spike);
+	//if (systime - prevtime > 0.01) { // combined firing rate (try to ramp this up to see the limits of QWT)
+		//prevtime = systime;
+		//channelSim = rand() % 60;
+		//spike.channelNum = channelSim;
+		//spike.spktime = systime;
+		//meaBuffer.push_back(spike);
 		
-		spkcount++;
-	}
+		//spkcount++;
+	//}
 
 	// TO-DO: change to atomic circular buffer
 	// add spikes to circular buffer
 	if (input(1) == 1) {
-		spike.channelNum = 0; // TO-DO: pull from MEA input frame
+		spike.channelNum = 10; // TO-DO: pull from MEA input frame
 		spike.spktime = systime; // TO-DO: update once input frame is more defined (may need to create MEA spike detector module)
 		meaBuffer.push_back(spike);
 	
@@ -145,9 +144,11 @@ void MEA::update(DefaultGUIModel::update_flags_t flag) {
 	switch (flag) {
 		case INIT:
 			setState("Time (s)", systime);
+			setParameter("Refresh Rate (s)", QString::number(refreshRate));
 			break;
 		
 		case MODIFY:
+			refreshRate = getParameter("Refresh Rate (s)").toDouble(); // To-do: constrain to > 4 Hz?
 			bookkeep();
 			break;
 
@@ -189,7 +190,7 @@ void MEA::initParameters() {
 
 // TO-DO: possibly delete this
 void MEA::bookkeep() {
-	
+	timer2->start(refreshRate * 1000); // restart timer with new refreshRate
 }
 
 void MEA::refreshMEA() {
@@ -208,15 +209,13 @@ void MEA::refreshMEA() {
 		}
 		// replot (TO-DO: test the limits of this)
 		rCurve->setSamples(time, channels);
-		rplot->replot();
-		if (systime <= displayTime) {
-			emit setPlotRange(0, systime, plotymin, plotymax);
-			//rplot->setAxisScale(QwtPlot::xBottom, 0.01, systime);
-		} else {
-			emit setPlotRange(systime-displayTime, systime, plotymin, plotymax);
-			//rplot->setAxisScale(QwtPlot::xBottom, systime-displayTime, systime);
-		}
 	}
+	if (systime <= displayTime) {
+		emit setPlotRange(0, systime, plotymin, plotymax);
+	} else {
+		emit setPlotRange(systime-displayTime, systime, plotymin, plotymax);
+	}
+	rplot->replot();
 	setState("Time (s)", systime);
 	spkcount = 0;
 }

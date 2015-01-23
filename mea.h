@@ -75,6 +75,8 @@ class MEA : public DefaultGUIModel {
 		long long count; // keep track of plug-in time
 		double dt;
 		double systime;
+		QTimer *timer2 = new QTimer(this);
+		double refreshRate = 10;
 		int spkcount; // spike count since last refresh
 		struct spikeData {
 			double channelNum;
