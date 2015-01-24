@@ -25,6 +25,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <math.h>
 #include <numeric>
 #include <time.h>
+#include <qwt_plot_renderer.h>
 
 #include <sys/stat.h>
 
@@ -90,10 +91,9 @@ void MEA::customizeGUI(void) {
 	rightLayout->addWidget(rplot);
 	
 	QObject::connect(clearButton, SIGNAL(clicked()), this, SLOT(clearData()));
-	QObject::connect(savePlotButton, SIGNAL(clicked()), this, SLOT(exportSVG()));
+	QObject::connect(savePlotButton, SIGNAL(clicked()), this, SLOT(screenshot()));
 	QObject::connect(DefaultGUIModel::pauseButton, SIGNAL(toggled(bool)),this,SLOT(pause(bool)));
 	QObject::connect(DefaultGUIModel::pauseButton, SIGNAL(toggled(bool)),clearButton,SLOT(setEnabled(bool)));
-	QObject::connect(DefaultGUIModel::pauseButton, SIGNAL(toggled(bool)),savePlotButton,SLOT(setEnabled(bool)));
 	QObject::connect(DefaultGUIModel::pauseButton, SIGNAL(toggled(bool)),DefaultGUIModel::modifyButton,SLOT(setEnabled(bool)));
 	QObject::connect(this, SIGNAL(setPlotRange(double, double, double, double)), rplot, SLOT(setAxes(double, double, double, double)));
 	
@@ -220,41 +220,9 @@ void MEA::refreshMEA() {
 	spkcount = 0;
 }
 
-// TO-DO: not currently working
-void MEA::exportSVG() {
-	QString fileName = "MEA_raster.svg";
-		
-	#if QT_VERSION < 0x040000
-	
-	#ifndef QT_NO_FILEDIALOG
-	fileName = QFileDialog::getSaveFileName("MEA_raster.svg", "SVG Documents (*.svg)", this);
-	#endif
-	if (!fileName.isEmpty()) {
-		// enable workaround for Qt3 misalignments
-		QwtPainter::setSVGMode(true);
-		QPicture picture;
-		QPainter p(&picture);
-		rplot->print(&p, QRect(0, 0, 800, 600));
-		p.end();
-		picture.save(fileName, "svg");
-	}
-	
-	#elif QT_VERSION >= 0x040300
-	
-	#ifdef QT_SVG_LIB
-	#ifndef QT_NO_FILEDIALOG
-	fileName = QFileDialog::getSaveFileName(
-	this, "Export File Name", QString(),
-	"SVG Documents (*.svg)");
-	#endif
-	if ( !fileName.isEmpty() ) {
-		QSvgGenerator generator;
-		generator.setFileName(fileName);
-		generator.setSize(QSize(800, 600));
-		rplot->print(generator);
-	}
-	#endif
-	#endif
+void MEA::screenshot() {
+	QwtPlotRenderer renderer;
+	renderer.exportTo(rplot,"screenshot.pdf");
 }
 
 void MEA::clearData() {

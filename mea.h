@@ -99,12 +99,12 @@ class MEA : public DefaultGUIModel {
 		QwtPlotCurve *rCurve;
 		
 		// MEA functions
-		void initParameters();
-		void bookkeep();
+		void initParameters(void);
+		void bookkeep(void);
 	
 	private slots:
 		// all custom slots
 		void refreshMEA(void);
-		void clearData();
-		void exportSVG();
+		void clearData(void);
+		void screenshot(void);
 };
