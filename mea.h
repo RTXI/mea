@@ -32,6 +32,11 @@ class TimeScaleDraw: public QwtScaleDraw
 			baseTime(base)
 		{
 		}
+		virtual QwtText label(double v) const
+		{
+			QTime upTime = baseTime.addSecs((int)v);
+			return upTime.toString();
+		}
 	private:
 		QTime baseTime;
 };
