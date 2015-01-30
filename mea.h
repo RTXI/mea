@@ -20,34 +20,53 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 * MEA
 */
 
-#include <default_gui_model.h>
-#include <boost/circular_buffer.hpp>
+#include <atomic>
 #include <basicplot.h>
-//#include <RTXIprintfilter.h>
-#include <QtGui>
-#include <cstdlib>
-#include <qwt_plot.h>
+#include <default_gui_model.h>
 #include <qwt_plot_curve.h>
-#include <qwt_scale_engine.h>
-#include <qwt_date_scale_engine.h>
-#include <qwt_date_scale_draw.h>
-#include <qwt_symbol.h>
-#include <qwt_compat.h>
 
 class TimeScaleDraw: public QwtScaleDraw
 {
-public:
-    TimeScaleDraw(const QTime &base):
-        baseTime(base)
-    {
-    }
-    virtual QwtText label(double v) const
-    {
-        QTime upTime = baseTime.addSecs((int)v);
-        return upTime.toString();
-    }
-private:
-    QTime baseTime;
+	public:
+		TimeScaleDraw(const QTime &base):
+			baseTime(base)
+		{
+		}
+	private:
+		QTime baseTime;
+};
+
+template<typename T, size_t Size>
+class ringbuffer {
+	public:
+		ringbuffer() : head_(0), tail_(0) {}
+
+		bool push(const T & value)
+		{
+			size_t head = head_.load(std::memory_order_relaxed);
+			size_t next_head = next(head);
+			if (next_head == tail_.load(std::memory_order_acquire))
+				return false;
+			ring_[head] = value;
+			head_.store(next_head, std::memory_order_release);
+				return true;
+		}
+		bool pop(T & value)
+		{
+			size_t tail = tail_.load(std::memory_order_relaxed);
+			if (tail == head_.load(std::memory_order_acquire))
+				return false;
+			value = ring_[tail];
+			tail_.store(next(tail), std::memory_order_release);
+				return true;
+		}
+	private:
+		size_t next(size_t current)
+		{
+			return (current + 1) % Size;
+		}
+		T ring_[Size];
+		std::atomic<size_t> head_, tail_;
 };
 
 class MEA : public DefaultGUIModel {
@@ -71,24 +90,29 @@ class MEA : public DefaultGUIModel {
 		// testing variables (delete eventually)
 		double prevtime;
 		int channelSim;
+		
 		// inputs, states, related constants
-		long long count; // keep track of plug-in time
+		QTimer *timer = new QTimer(this);
 		double dt;
+		double refreshRate;
 		double systime;
-		QTimer *timer2 = new QTimer(this);
-		double refreshRate = 10;
-		int spkcount; // spike count since last refresh
+		long long count; // keep track of plug-in time
+		QString note;
+		
+		// data handling
+		double numChannels;
+		int spkcount;
 		struct spikeData {
 			double channelNum;
 			double spktime;
 			// TO-DO: spike waveform (vector?)
 		};
+		ringbuffer<spikeData, 10000> meaBuffer;
 		spikeData spike;
-		boost::circular_buffer<spikeData> meaBuffer; // buffer for all incoming data
-		int n = 200; // maximum spikes per second for one channel
-		int numChannels = 60; // TO-DO: change to 60 during actual testing
-		int displayTime = 10*60; // change this to set the number of minutes of displayed raster data
-		double bufferIndex;
+		spikeData currentSpike;
+		
+		// raster plot variables
+		int displayTime = 600; // (s) change this to set the raster display window
 		QwtArray<double> channels;
 		QwtArray<double> time;
 		double plotymin = 0;
