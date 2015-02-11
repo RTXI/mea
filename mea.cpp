@@ -33,7 +33,12 @@ extern "C" Plugin::Object *createRTXIPlugin(void)
 static DefaultGUIModel::variable_t vars[] = {
 	{ "Input", "MEA input", DefaultGUIModel::INPUT, },
 	{ "Event Trigger", "Trigger that indicates the spike time/event (=1)", DefaultGUIModel::INPUT, },
+    { "Vm", "Membrane Voltage (in mV)", DefaultGUIModel::INPUT, },
 	// { "Stim", "", DefaultGUIModel::OUTPUT, }, // TO-DO: stimulation output
+    { "Threshold (mV)", "Threshold (mV) at which to detect a spike",
+        DefaultGUIModel::PARAMETER | DefaultGUIModel::DOUBLE, },
+    { "Min Interval (ms)", "Minimum interval (refractory period) that must pass before another spike is detected",
+        DefaultGUIModel::PARAMETER | DefaultGUIModel::DOUBLE, },
 	{ "Refresh Rate (s)", "Raster plot refresh rate", DefaultGUIModel::PARAMETER | DefaultGUIModel::DOUBLE, },
 	{ "Note", "Time-stamped note to include in the output file", DefaultGUIModel::PARAMETER, },
 	{ "Time (s)", "Time (s)", DefaultGUIModel::STATE, },
@@ -100,26 +105,68 @@ void MEA::customizeGUI(void)
 
 MEA::~MEA(void) {}
 
-void MEA::execute(void) {	
-    systime = count * dt; // current time
-
+void MEA::execute(void) {
+    systime = count * RT::System::getInstance()->getPeriod() * 1e-9;; // current time
+    
     // QWT test code -- delete eventually
-    if (systime - prevtime > 0.01) { // combined firing rate (try to ramp this up to see the limits of QWT)
-        prevtime = systime;
-        channelSim = rand() % 60;
-        spike.channelNum = channelSim;
-        spike.spktime = systime;
-        meaBuffer.push(spike);
-        spkcount++;
-    }
+    //if (systime - prevtime > 0.01) { // combined firing rate (try to ramp this up to see the limits of QWT)
+        //prevtime = systime;
+        //channelSim = rand() % 60;
+        //spike.channelNum = channelSim;
+        //spike.spktime = systime;
+        //meaBuffer.push(spike);
+        //spkcount++;
+    //}
 
-    // add spikes to buffer
-    if (input(1) == 1) {
-		spike.channelNum = 10; // TO-DO: pull from MEA input frame
-		spike.spktime = systime; // TO-DO: update once input frame is more defined (may need to create MEA spike detector module)
-		meaBuffer.push(spike);
-		
-		spkcount++;
+    for(int i = 0; i < numChannels; i++) {
+	    vm[i] = input(2); // membrane voltage -- parse this from input frame for each channel
+	    switch (state[i])
+	    {
+	        case 0:
+	            if (vm[i] > thresh)
+	            {
+	                state[i] = 1;
+	                last_spike_time[i] = systime;
+	            }
+	            break;
+	        case 1:
+	            state[i] = 2;
+	            break;
+	        case 2:
+	            if (vm[i] > thresh && (systime - last_spike_time[i]) > 100)
+	            {
+	                state[i] = 4;
+	            }
+	            else if (vm[i] < thresh)
+	            {
+	                state[i] = 3;
+	            }
+	            break;
+	        case 3:
+	            state[i] = -1;
+	            break;
+	        case 4:
+	            if (vm[i] < thresh)
+	            {
+	                state[i] = -1;
+	            }
+	            break;
+	        case -1:
+	            if (systime - last_spike_time[0] > min_int)
+	            {
+	                state[i] = 0;
+	            }
+	            break;
+	        default:
+	            break;
+	    }
+	    // add spikes to buffer
+	    if (state[i] == 1) {
+			spike.channelNum = i;
+			spike.spktime = systime;
+			meaBuffer.push(spike);
+			spkcount++;
+	    }
     }
 	
     count++; // increment count to measure time
@@ -130,10 +177,14 @@ void MEA::update(DefaultGUIModel::update_flags_t flag) {
     switch (flag) {
         case INIT:
             setState("Time (s)", systime);
+            setParameter("Threshold (mV)", QString::number(thresh * 1000));
+            setParameter("Min Interval (ms)", QString::number(min_int * 1000));
             setParameter("Refresh Rate (s)", QString::number(refreshRate));
             setParameter("Note", note);
             break;
         case MODIFY:
+            thresh = getParameter("Threshold (mV)").toDouble() / 1000;
+            min_int = getParameter("Min Interval (ms)").toDouble() / 1000;
             refreshRate = getParameter("Refresh Rate (s)").toDouble(); // To-do: constrain to > 4 Hz?
             bookkeep();
             break;
@@ -144,7 +195,7 @@ void MEA::update(DefaultGUIModel::update_flags_t flag) {
             bookkeep();
             break;
         case PERIOD:
-            dt = RT::System::getInstance()->getPeriod() * 1e-9;
+            //dt = RT::System::getInstance()->getPeriod() * 1e-9; // is this ever called? is calling it every time in execute slower? check DefaultGUIModel
             bookkeep();
             break;
         default:
@@ -158,14 +209,17 @@ void MEA::initParameters() {
     prevtime = 0;
     channelSim = 0;
     
-    
-    dt = RT::System::getInstance()->getPeriod() * 1e-9;
     systime = 0;
     refreshRate = 10; // max refresh rate = 4 Hz
     count = 0;
     note = "";
+    thresh = -20e-3;
+    min_int = 5e-3;
     
     numChannels = 60;
+    vm.resize(numChannels);
+    last_spike_time.resize(numChannels);
+    state.resize(numChannels);
     spkcount = 0;
     plotymin = 0;
     plotymax = numChannels-1;

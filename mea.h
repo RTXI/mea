@@ -25,7 +25,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <default_gui_model.h>
 #include <qwt_plot_curve.h>
 
-class TimeScaleDraw: public QwtScaleDraw
+class TimeScaleDraw : public QwtScaleDraw
 {
 	public:
 		TimeScaleDraw(const QTime &base):
@@ -98,14 +98,18 @@ class MEA : public DefaultGUIModel {
 		
 		// inputs, states, related constants
 		QTimer *timer = new QTimer(this);
-		double dt;
 		double refreshRate;
 		double systime;
 		long long count; // keep track of plug-in time
 		QString note;
+        double thresh;
+        double min_int;
 		
 		// data handling
 		double numChannels;
+		QwtArray<double> vm;
+		QwtArray<double> last_spike_time;
+		QwtArray<int> state;
 		int spkcount;
 		struct spikeData {
 			double channelNum;
