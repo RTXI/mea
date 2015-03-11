@@ -97,29 +97,71 @@ class MEA : public DefaultGUIModel {
 		int channelSim;
 		
 		// inputs, states, related constants
-		QTimer *timer = new QTimer(this);
+		QTimer *timer0 = new QTimer(this);
+        QTimer *timer1 = new QTimer(this);
 		double refreshRate;
 		double systime;
+        double dt;
 		long long count; // keep track of plug-in time
 		QString note;
         double thresh;
         double min_int;
+        double samplingFrequency = 20000; // TO-DO: better to get this from control panel
+        double spikeDetectWindow = 50e-3;
 		
 		// data handling
-		double numChannels;
-		QwtArray<double> vm;
+		static const int numChannels = 60;
+        static const int vmBufferSize = 2000;
+		int numVoltageReads;
+		std::array<ringbuffer<double, vmBufferSize>, numChannels> vm;
 		QwtArray<double> last_spike_time;
 		QwtArray<int> state;
 		int spkcount;
 		struct spikeData {
-			double channelNum;
 			double spktime;
-			// TO-DO: spike waveform (vector?)
+			double channelNum;
+			double currentThresh;
+			QwtArray<double> wave;
 		};
 		ringbuffer<spikeData, 10000> meaBuffer;
 		spikeData spike;
 		spikeData currentSpike;
-		
+        
+        // spike detector variables
+        QVector<int> initialSamplesToSkip;
+		QVector<bool> regularDetect;
+		QVector<double> spikeDetectionBuffer;
+		ulong bufferOffset;
+		QVector<double*> detectionCarryOverBuffer; // TO-DO: maybe change this to a vector of vectors
+		int carryOverLength;
+		int numPre;
+		int numPost;
+		double maxSpikeWidth;
+		double minSpikeWidth;
+        int downsample;
+        QVector<QVector<double>> RMSList;
+        QVector<double> channelThresh;
+        double maxSpikeAmp;
+        double minSpikeSlope;
+		int deadTime;
+        double currentThreshold;
+        QVector<double> threshold;
+        int numUpdatesForTrain = 200; // TO-DO: this needs to be 10/spikeDetectWindow
+        QVector<int> numUpdates;
+        double vm_temp;
+		QVector<bool> inASpike; // true when the waveform is over or under the current detection threshold for a given channel
+		QVector<bool> waitToComeDown;
+		int threshPolarity;
+		QVector<int> enterSpikeIndex;
+		QVector<int> exitSpikeIndex;
+		bool posCross; // polarity of inital threshold crossing
+		int spikeWidth;
+		int spikeMaxIndex;
+		double spikeMax;
+		QwtArray<double> waveform;
+		bool goodSpike;
+        double VOLTAGE_EPSILON = 0.1e-6; // 0.1 uV
+        
 		// raster plot variables
 		int displayTime = 600; // (s) change this to set the raster display window
 		QwtArray<double> channels;
@@ -140,4 +182,13 @@ class MEA : public DefaultGUIModel {
 		void refreshMEA(void);
 		void clearData(void);
 		void screenshot(void);
+        void detectSpikes(void);
+        void updateThreshold(int);
+        void calcThreshForOneBlock(int);
+		bool withinThreshold(double, double, int);
+		bool findSpikePolarityBySlopeOfCrossing(int);
+		int findMaxDeflection(int, int);
+		void createWaveform(int);
+		bool checkSpike(void);
+		double getSpikeSlope(QVector<double>);
 };

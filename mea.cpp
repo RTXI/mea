@@ -21,6 +21,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "mea.h"
+#include <iostream>
 #include <QtGui>
 #include <qwt_plot_renderer.h>
 #include <qwt_symbol.h>
@@ -31,15 +32,19 @@ extern "C" Plugin::Object *createRTXIPlugin(void)
 }
 
 static DefaultGUIModel::variable_t vars[] = {
-	{ "Input", "MEA input", DefaultGUIModel::INPUT, },
-	{ "Event Trigger", "Trigger that indicates the spike time/event (=1)", DefaultGUIModel::INPUT, },
+	// { "Input", "MEA input", DefaultGUIModel::INPUT, },
+	// { "Event Trigger", "Trigger that indicates the spike time/event (=1)", DefaultGUIModel::INPUT, },
     { "Vm", "Membrane Voltage (in mV)", DefaultGUIModel::INPUT, },
 	// { "Stim", "", DefaultGUIModel::OUTPUT, }, // TO-DO: stimulation output
-    { "Threshold (mV)", "Threshold (mV) at which to detect a spike",
+    { "Max spike width (ms)", "Maximum spike duration",
         DefaultGUIModel::PARAMETER | DefaultGUIModel::DOUBLE, },
-    { "Min Interval (ms)", "Minimum interval (refractory period) that must pass before another spike is detected",
+    { "Min spike width (ms)", "Minimum interval (refractory period) that must pass before another spike is detected",
         DefaultGUIModel::PARAMETER | DefaultGUIModel::DOUBLE, },
-	{ "Refresh Rate (s)", "Raster plot refresh rate", DefaultGUIModel::PARAMETER | DefaultGUIModel::DOUBLE, },
+    { "Max spike amplitude (uV)", "Maximum spike amplitude in microvolts",
+        DefaultGUIModel::PARAMETER | DefaultGUIModel::DOUBLE, },
+    { "Min spike slope (uV/s)", "Minimum slope of a spike in microvolts per second",
+        DefaultGUIModel::PARAMETER | DefaultGUIModel::DOUBLE, },
+	{ "Refresh rate (s)", "Raster plot refresh rate", DefaultGUIModel::PARAMETER | DefaultGUIModel::DOUBLE, },
 	{ "Note", "Time-stamped note to include in the output file", DefaultGUIModel::PARAMETER, },
 	{ "Time (s)", "Time (s)", DefaultGUIModel::STATE, },
 };
@@ -94,8 +99,11 @@ void MEA::customizeGUI(void)
     DefaultGUIModel::modifyButton->setToolTip("Commit changes to parameter values");
     DefaultGUIModel::unloadButton->setToolTip("Close module");
 
-    timer->start(refreshRate * 1000); // max refresh rate = 4 Hz
-    QObject::connect(timer, SIGNAL(timeout(void)), this, SLOT(refreshMEA(void)));
+    timer0->start(refreshRate * 1000); // max refresh rate = 4 Hz
+    QObject::connect(timer0, SIGNAL(timeout(void)), this, SLOT(refreshMEA(void)));
+    
+    timer1->start(500); // spikeDetectWindow * 1000
+    QObject::connect(timer1, SIGNAL(timeout(void)), this, SLOT(detectSpikes(void)));
 
     emit setPlotRange(0, systime, plotymin, plotymax);
     customLayout->addWidget(plotBox, 0, 0, 1, 2);
@@ -106,69 +114,17 @@ void MEA::customizeGUI(void)
 MEA::~MEA(void) {}
 
 void MEA::execute(void) {
-    systime = count * RT::System::getInstance()->getPeriod() * 1e-9;; // current time
-    
-    // QWT test code -- delete eventually
-    //if (systime - prevtime > 0.01) { // combined firing rate (try to ramp this up to see the limits of QWT)
-        //prevtime = systime;
-        //channelSim = rand() % 60;
-        //spike.channelNum = channelSim;
-        //spike.spktime = systime;
-        //meaBuffer.push(spike);
-        //spkcount++;
-    //}
+    systime = count * dt; //RT::System::getInstance()->getPeriod() * 1e-9; // current time
 
-    for(int i = 0; i < numChannels; i++) {
-	    vm[i] = input(2); // membrane voltage -- parse this from input frame for each channel
-	    switch (state[i])
-	    {
-	        case 0:
-	            if (vm[i] > thresh)
-	            {
-	                state[i] = 1;
-	                last_spike_time[i] = systime;
-	            }
-	            break;
-	        case 1:
-	            state[i] = 2;
-	            break;
-	        case 2:
-	            if (vm[i] > thresh && (systime - last_spike_time[i]) > 100)
-	            {
-	                state[i] = 4;
-	            }
-	            else if (vm[i] < thresh)
-	            {
-	                state[i] = 3;
-	            }
-	            break;
-	        case 3:
-	            state[i] = -1;
-	            break;
-	        case 4:
-	            if (vm[i] < thresh)
-	            {
-	                state[i] = -1;
-	            }
-	            break;
-	        case -1:
-	            if (systime - last_spike_time[0] > min_int)
-	            {
-	                state[i] = 0;
-	            }
-	            break;
-	        default:
-	            break;
-	    }
-	    // add spikes to buffer
-	    if (state[i] == 1) {
-			spike.channelNum = i;
-			spike.spktime = systime;
-			meaBuffer.push(spike);
-			spkcount++;
-	    }
-    }
-	
+    // TO-DO: possibly change to a FIFO and hold entire buffer frame
+    //        buffer systimes for the current vm buffer? need to figure out how assign spike times
+    
+    // buffer voltage traces
+	for (int i = 0; i < numChannels; i++) {
+		vm[i].push(input(0));
+	}
+	numVoltageReads++;
+    
     count++; // increment count to measure time
     return;
 }
@@ -177,15 +133,19 @@ void MEA::update(DefaultGUIModel::update_flags_t flag) {
     switch (flag) {
         case INIT:
             setState("Time (s)", systime);
-            setParameter("Threshold (mV)", QString::number(thresh * 1000));
-            setParameter("Min Interval (ms)", QString::number(min_int * 1000));
-            setParameter("Refresh Rate (s)", QString::number(refreshRate));
+            setParameter("Max spike width (ms)", QString::number(maxSpikeWidth * 1e3 / samplingFrequency));
+            setParameter("Min spike width (ms)", QString::number(minSpikeWidth * 1e3 / samplingFrequency));
+            setParameter("Max spike amplitude (uV)", QString::number(maxSpikeAmp * 1e6));
+            setParameter("Min spike slope (uV/s)", QString::number(minSpikeSlope * 1e6));
+            setParameter("Refresh rate (s)", QString::number(refreshRate));
             setParameter("Note", note);
             break;
         case MODIFY:
-            thresh = getParameter("Threshold (mV)").toDouble() / 1000;
-            min_int = getParameter("Min Interval (ms)").toDouble() / 1000;
-            refreshRate = getParameter("Refresh Rate (s)").toDouble(); // To-do: constrain to > 4 Hz?
+            maxSpikeWidth = floor(getParameter("Max spike width (ms)").toDouble() * samplingFrequency / 1e3);
+            minSpikeWidth = floor(getParameter("Min spike width (ms)").toDouble() * samplingFrequency / 1e3);
+            maxSpikeAmp = getParameter("Max spike amplitude (uV)").toDouble() / 1e6;
+            minSpikeSlope = getParameter("Min spike slope (uV/s)").toDouble() / 1e6;
+            refreshRate = getParameter("Refresh rate (s)").toDouble(); // To-do: constrain to > 4 Hz?
             bookkeep();
             break;
         case PAUSE:
@@ -195,7 +155,7 @@ void MEA::update(DefaultGUIModel::update_flags_t flag) {
             bookkeep();
             break;
         case PERIOD:
-            //dt = RT::System::getInstance()->getPeriod() * 1e-9; // is this ever called? is calling it every time in execute slower? check DefaultGUIModel
+            dt = RT::System::getInstance()->getPeriod() * 1e-9; // is this ever called? is calling it every time in execute slower? check DefaultGUIModel
             bookkeep();
             break;
         default:
@@ -205,30 +165,54 @@ void MEA::update(DefaultGUIModel::update_flags_t flag) {
 
 // custom functions
 void MEA::initParameters() {
-    // testing variables (delete eventually)
-    prevtime = 0;
-    channelSim = 0;
-    
     systime = 0;
-    refreshRate = 10; // max refresh rate = 4 Hz
+    dt = RT::System::getInstance()->getPeriod() * 1e-9;
+    refreshRate = 2; // max refresh rate = 4 Hz
     count = 0;
     note = "";
     thresh = -20e-3;
     min_int = 5e-3;
     
-    numChannels = 60;
-    vm.resize(numChannels);
     last_spike_time.resize(numChannels);
     state.resize(numChannels);
     spkcount = 0;
     plotymin = 0;
     plotymax = numChannels-1;
     
+    // spike validation variables (user inputs)
+    threshPolarity = 0; // TO-DO: this is an input in Neurorighter
+	numPre = 15; // TO-DO: this is an input in Neurorighter -- these need to be optimized (definitely dependent on samplingFrequency
+	numPost = 15; // TO-DO: this is an input in Neurorighter
+	maxSpikeWidth = floor(10e-3 * samplingFrequency);
+	minSpikeWidth = floor(0.1e-3 * samplingFrequency);
+	minSpikeSlope = 5e-6; // TO-DO: this was 25e-6 in Neurorighter but is too high for my test data
+	maxSpikeAmp = 1000e-6;
+    downsample = 1; // TO-DO: this is an input in Neurorighter
+	deadTime = (int)(1e-3 * samplingFrequency); // TO-DO: where is this used?
+    
+    // spike detector variables
+    numVoltageReads = 0;
+    threshold.resize(numChannels);
+    numUpdates.resize(numChannels);
+    initialSamplesToSkip.resize(numChannels);
+    regularDetect.resize(numChannels);
+	spikeDetectionBuffer.reserve(vmBufferSize); // TO-DO: set size based on spike detector rate // might need to resize instead of reserve
+	detectionCarryOverBuffer.resize(numChannels);
+    RMSList.resize(numChannels);
+    for(int j = 0; j < numChannels; j++) {
+        RMSList[j].resize(numUpdatesForTrain);
+    }
+    inASpike.resize(numChannels);
+    waitToComeDown.resize(numChannels);
+    enterSpikeIndex.resize(numChannels);
+    exitSpikeIndex.resize(numChannels);
+    waveform.resize(numPost + numPre + 1);
+    
     bookkeep();
 }
 
 void MEA::bookkeep() {
-    timer->start(refreshRate * 1000); // restart timer with new refreshRate
+    timer0->start(refreshRate * 1000); // restart timer with new refreshRate
 }
 
 void MEA::refreshMEA() {
@@ -259,8 +243,7 @@ void MEA::refreshMEA() {
     spkcount = 0;
 }
 
-void MEA::screenshot()
-{
+void MEA::screenshot() {
     QwtPlotRenderer renderer;
     renderer.exportTo(rplot,"screenshot.pdf");
 }
@@ -272,3 +255,326 @@ void MEA::clearData() {
 	rCurve->setSamples(time, channels);
 	rplot->replot();
 }
+
+// spike detection/validation
+void MEA::detectSpikes() {
+    int channel;
+    int recIndexOffset;
+    int indiciesToSearchForCross, indiciesToSearchForReturn;
+	int idx, i;
+    bool skipSpikeDetection;
+    double spikeDetectionSum;
+    //std::cout << "Number of voltage reads since last update: " << numVoltageReads << std::endl;
+    
+    for(channel = 0; channel < numChannels; channel++) {
+        // define position in current data buffer
+		i = numPre + initialSamplesToSkip[channel];
+		initialSamplesToSkip[channel] = 0;
+		
+		// create the current data buffer
+		if (!regularDetect[channel])
+		{
+			// first fill, cannot get the first samples because the number of "pre" samples will be too low
+			regularDetect[channel] = true; // no longer the first detection
+			spikeDetectionBuffer.clear();
+			for (int j = 0; j < numVoltageReads; j++) {
+				vm[channel].pop(vm_temp);
+				spikeDetectionBuffer.prepend(vm_temp);
+			}
+			recIndexOffset = 0; // TO-DO: why is this not used? see Neurorighter code
+		}
+		else
+		{
+			spikeDetectionBuffer.clear();
+			// data from this buffer
+			for (int j = 0; j < numVoltageReads; j++) {
+				vm[channel].pop(vm_temp);
+				spikeDetectionBuffer.prepend(vm_temp);
+			}
+			// data from last buffer that we could not detect on because of edge effects
+			for (int j = 0; j < carryOverLength; j++) {
+				spikeDetectionBuffer.prepend(detectionCarryOverBuffer[channel][j]);
+			}
+			// need to account for the fact that our new spike detection buffer will have a starting index that does not start with new data
+			recIndexOffset = carryOverLength;
+		}
+        
+        // don't need to run spike detection if buffer is empty (protocol hasn't started) or all 0 (not acquiring data)
+        skipSpikeDetection = false;
+        spikeDetectionSum = 0;
+        if (!spikeDetectionBuffer.empty()) {
+            for (int j = 0; j < spikeDetectionBuffer.count(); j++) {
+                spikeDetectionSum = spikeDetectionSum + spikeDetectionBuffer[j];
+            }
+            if (spikeDetectionSum == 0) {
+                skipSpikeDetection = true;
+            }
+        } else {
+            skipSpikeDetection = true;
+        }
+		
+        if (!skipSpikeDetection) {
+            indiciesToSearchForCross = spikeDetectionBuffer.count() - maxSpikeWidth - numPost;
+            indiciesToSearchForReturn = spikeDetectionBuffer.count() - numPost;
+        
+            updateThreshold(channel); // update threshold for current channel
+            //if(spikeDetectionBuffer.count() > 0)
+                //std::cout << "Spike detection buffer: " << spikeDetectionBuffer[0] << std::endl;
+            //else
+                //std::cout << "Spike detection buffer is empty" << std::endl;
+            
+            // For fixed and adaptive, the current threshold is not a function of i
+            currentThreshold = threshold[channel];
+            for (; i < indiciesToSearchForReturn; i++)
+            {
+                //peak detection- just requires one sample
+                if (!inASpike[channel] && i < indiciesToSearchForCross)
+                {
+                    if (withinThreshold(spikeDetectionBuffer[i],currentThreshold,threshPolarity))
+                    {
+                        waitToComeDown[channel] = false;
+                        continue; // not above threshold, next point please
+                    }
+                    else if (!waitToComeDown[channel])
+                    {
+                        // We are entering a spike
+                        inASpike[channel] = true;
+                        enterSpikeIndex[channel] = i; // TO-DO: maybe use this index (either i or enterSpikeIndex) to set spike times?
+            
+                        // Positive or negative crossing
+                        posCross = findSpikePolarityBySlopeOfCrossing(channel);
+                        //std::cout << "Found a spike of polarity: " << posCross << std::endl;
+                    }
+                }
+                // exiting a spike, maxspikewidth (to find peak), -numPre and +numPost (to find waveform)
+                else if (inASpike[channel] &&
+                        ((posCross && spikeDetectionBuffer[i] < currentThreshold) ||
+                        (!posCross && spikeDetectionBuffer[i] > -currentThreshold)))
+                {
+                    // now exiting a spike
+                    inASpike[channel] = false;
+                    exitSpikeIndex[channel] = i;
+                    // calculate spike width
+                    spikeWidth = exitSpikeIndex[channel] - enterSpikeIndex[channel];
+                    // find the index and value of the spike maximum
+                    spikeMaxIndex = findMaxDeflection(enterSpikeIndex[channel], spikeWidth); // TO-DO: posCross? using absolute for now
+                    spikeMax = spikeDetectionBuffer[spikeMaxIndex];
+                    // define spike waveform
+                    createWaveform(spikeMaxIndex);
+                    // check if the spike is any good
+                    goodSpike = checkSpike(); // TO-DO: debug this -- which step is causing all spikes to be thrown out?
+                    if (!goodSpike) {
+                        //std::cout << "Throwing out spike on channel " << channel << std::endl;
+                        continue; // if the spike is no good
+                    }
+                    // record the waveform
+                    //std::cout << "Recording spike on channel " << channel << std::endl;
+                    spike.spktime = systime; // TO-DO: this is probably no longer accurate by the time this code is reached
+                    spike.channelNum = channel;
+                    spike.currentThresh = currentThreshold;
+                    spike.wave = waveform;
+                    meaBuffer.push(spike);
+                    spkcount++;
+            
+                    // Carry-over dead time if a spike was detected at the end of the buffer
+                    initialSamplesToSkip[channel] = deadTime + numPre + (exitSpikeIndex[channel] - indiciesToSearchForCross);
+                    if (initialSamplesToSkip[channel] < 0)
+                        initialSamplesToSkip[channel] = 0;
+            
+                    //else
+                    i = exitSpikeIndex[channel] + deadTime;
+                }
+                else if (inASpike[channel] && i == indiciesToSearchForReturn - 1)
+                {
+                    // spike is taking too long to come back through the threshold
+                    waitToComeDown[channel] = true;
+                    inASpike[channel] = false;
+                    break;
+                }
+                else if (!inASpike[channel] && i >= indiciesToSearchForCross)
+                {
+                    break;
+                }
+            }
+            // create carry-over buffer from last samples of this buffer
+            idx = 0;
+            for (i = spikeDetectionBuffer.count() - carryOverLength; i < spikeDetectionBuffer.count(); i++)
+            {
+                detectionCarryOverBuffer[channel][idx] = spikeDetectionBuffer[i];
+                idx++;
+            }
+        }
+    }
+    numVoltageReads = 0;
+}
+
+void MEA::updateThreshold(int channel)
+{
+    //std::cout << "updateThreshold -- input(0): " << input(0) << std::endl;
+    // start updating threshold once data acquisition starts
+    if (!spikeDetectionBuffer.empty())
+    {
+        if (numUpdates[channel] > numUpdatesForTrain) { /* do nothing */ }
+        else if (numUpdates[channel] == numUpdatesForTrain)
+        {
+            // average threshold estimates gathered during training period
+            for(int j = 0; j < RMSList[channel].size(); j++) {
+                threshold[channel] += RMSList[channel][j];
+            }
+            threshold[channel] /= RMSList[channel].size();
+            numUpdates[channel]++; // prevent further updates
+        }
+        else
+        {
+            calcThreshForOneBlock(channel);
+            numUpdates[channel]++;
+        }
+    }
+}
+
+void MEA::calcThreshForOneBlock(int channel)
+{
+    double dd;
+    double tempData = 0;
+    double thresholdTemp;
+    for (int j = 0; j < spikeDetectionBuffer.size() / downsample; j++)
+    {
+        dd = spikeDetectionBuffer[j * downsample] * spikeDetectionBuffer[j * downsample];
+        if (dd > 0) // don't include blanked samples
+        {
+            tempData += dd;
+        }
+    }
+    tempData /= (spikeDetectionBuffer.size() / downsample);
+    //std::cout << "calcThreshForOneBlock -- tempData: " << tempData << std::endl;
+    thresholdTemp = sqrt(tempData); // TO-DO: * _thresholdMultiplier; What is this for?
+    //std::cout << "calcThreshForOneBlock -- thresholdTemp: " << thresholdTemp << std::endl;
+    RMSList[channel][numUpdates[channel]] = thresholdTemp;
+    //std::cout << "calcThreshForOneBlock -- threshold on channel " << channel << ": " << threshold[channel] << std::endl;
+    threshold[channel] = ((threshold[channel] * (numUpdates[channel])) / (numUpdates[channel] + 1)) + (thresholdTemp / (numUpdates[channel] + 1));
+    //std::cout << "calcThreshForOneBlock -- numUpdates on channel " << channel << ": " << numUpdates[channel] << std::endl;
+    //std::cout << "calcThreshForOneBlock -- threshold on channel " << channel << ": " << threshold[channel] << std::endl;
+}
+
+
+bool MEA::withinThreshold(double channelVoltage, double thisThreshold, int threshPolarity)
+{
+	switch(threshPolarity)
+	{
+		case 0:
+			return channelVoltage < thisThreshold && channelVoltage > -thisThreshold;
+		case 1:
+			return channelVoltage > -thisThreshold;
+		case 2:
+			return channelVoltage < thisThreshold;
+		default:
+			return channelVoltage < thisThreshold && channelVoltage > -thisThreshold;
+	}
+}
+
+bool MEA::findSpikePolarityBySlopeOfCrossing(int channel)
+{
+	// Is the crossing through the bottom or top threshold?
+	return spikeDetectionBuffer[enterSpikeIndex[channel]] > 0;
+}
+
+int MEA::findMaxDeflection(int startInd, int widthToSearch)
+{
+	int maxIndex = startInd;
+	// Find absolute maximum
+	for (int i = startInd+1; i < startInd + widthToSearch; i++) {
+        if (abs(spikeDetectionBuffer[i]) > abs(spikeDetectionBuffer[maxIndex])) {
+			maxIndex = i;
+		}
+	}
+	return maxIndex;
+}
+
+void MEA::createWaveform(int maxIdx)
+{
+	for (int j = maxIdx - numPre; j < maxIdx + numPost + 1; j++) {
+		waveform[j - maxIdx + numPre] = spikeDetectionBuffer[j];
+    }
+}
+
+// Check spike based on spike detection settings
+bool MEA::checkSpike()
+{
+	// Check spike width
+	bool spikeWidthGood = maxSpikeWidth >= spikeWidth && minSpikeWidth <= spikeWidth;
+	if (!spikeWidthGood) {
+        //std::cout << "Here0" << std::endl;
+		return spikeWidthGood;
+    }
+	
+	// Check spike amplitude
+    // TO-DO: absWave is all 0 -- abs function is not working as expected
+	QVector<double> absWave;
+	absWave.resize(waveform.size());
+	for (int i = 0; i < waveform.size(); ++i) {
+		absWave[i] = qAbs(waveform[i]);
+    }
+
+	bool spikeMaxGood = spikeMax < maxSpikeAmp; // this has already been calculated
+	if (!spikeMaxGood) {
+        //std::cout << "Here1" << std::endl;
+		return spikeMaxGood;
+    }
+
+	// Check to make sure this is not the tail end of another spike
+	bool notTailend = absWave[0] < absWave[numPre];
+    //std::cout << "absWave[0]: " << absWave[0] << std::endl << "absWave[numPre]: " << absWave[numPre] << std::endl;
+	if (!notTailend) {
+        //std::cout << "Here2" << std::endl;
+		return notTailend;
+    }
+
+	// Check spike slope
+    // TO-DO: currently debugging here -- slope is always 0
+	bool spikeSlopeGood = getSpikeSlope(absWave) > minSpikeSlope;
+	if (!spikeSlopeGood) {
+        //std::cout << "Spike slope: " << getSpikeSlope(absWave) << std::endl;
+        //std::cout << "Here3" << std::endl;
+		return spikeSlopeGood;
+    }
+
+	//Ensure that part of the spike is not blanked
+	double numBlanked = 0;
+	for (int i = 0; i < absWave.size(); i++)
+	{
+		if (absWave[i] < VOLTAGE_EPSILON)
+		{
+			numBlanked++;
+		}
+		else
+		{
+			numBlanked = 0;
+		}
+
+		if (numBlanked > 5) {
+			return false;
+        }
+	}
+
+	// spike is validated
+	return true;
+}
+
+double MEA::getSpikeSlope(QVector<double> absWave)
+{
+	double spikeSlopeEstimate = 0;
+	int diffWidth;
+
+	if (spikeWidth + 2 <= numPre)
+		diffWidth = spikeWidth + 2;
+	else
+		diffWidth = numPre;
+
+	for (int i = numPre + 1 - diffWidth; i < numPre + diffWidth; i++)
+	{
+		spikeSlopeEstimate += qAbs(absWave[i + 1] - absWave[i]);
+	}
+
+	return spikeSlopeEstimate / (double)(2 * diffWidth);
+}
+

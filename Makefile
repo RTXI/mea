@@ -7,12 +7,12 @@ HEADERS = mea.h\
 
 SOURCES = mea.cpp \
           moc_mea.cpp\
-			 /usr/local/lib/rtxi_includes/basicplot.cpp\
+          /usr/local/lib/rtxi_includes/basicplot.cpp\
           /usr/local/lib/rtxi_includes/scrollbar.cpp\
           /usr/local/lib/rtxi_includes/scrollzoomer.cpp\
           /usr/local/lib/rtxi_includes/moc_scrollbar.cpp\
           /usr/local/lib/rtxi_includes/moc_scrollzoomer.cpp\
-			 /usr/local/lib/rtxi_includes/moc_basicplot.cpp\
+          /usr/local/lib/rtxi_includes/moc_basicplot.cpp\
 
 LIBS = -lqwt
 
