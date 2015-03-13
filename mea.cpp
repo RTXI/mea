@@ -35,7 +35,8 @@ static DefaultGUIModel::variable_t vars[] = {
 	// { "Input", "MEA input", DefaultGUIModel::INPUT, },
 	// { "Event Trigger", "Trigger that indicates the spike time/event (=1)", DefaultGUIModel::INPUT, },
     { "Vm", "Membrane Voltage (in mV)", DefaultGUIModel::INPUT, },
-	// { "Stim", "", DefaultGUIModel::OUTPUT, }, // TO-DO: stimulation output
+	{ "Stim input", "Input waveform for stimulation", DefaultGUIModel::INPUT, },
+	{ "Stim output", "Output waveform for stimulation", DefaultGUIModel::OUTPUT, },
     { "Max spike width (ms)", "Maximum spike duration",
         DefaultGUIModel::PARAMETER | DefaultGUIModel::DOUBLE, },
     { "Min spike width (ms)", "Minimum interval (refractory period) that must pass before another spike is detected",
@@ -124,6 +125,9 @@ void MEA::execute(void) {
 		vm[i].push(input(0));
 	}
 	numVoltageReads++;
+	
+	// stimulation output -- need to make this specific to individual channels
+	output(0) = input(1);
     
     count++; // increment count to measure time
     return;
