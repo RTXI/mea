@@ -32,11 +32,9 @@ extern "C" Plugin::Object *createRTXIPlugin(void)
 }
 
 static DefaultGUIModel::variable_t vars[] = {
-	// { "Input", "MEA input", DefaultGUIModel::INPUT, },
-	// { "Event Trigger", "Trigger that indicates the spike time/event (=1)", DefaultGUIModel::INPUT, },
     { "Vm", "Membrane Voltage (in mV)", DefaultGUIModel::INPUT, },
-	{ "Stim input", "Input waveform for stimulation", DefaultGUIModel::INPUT, },
-	{ "Stim output", "Output waveform for stimulation", DefaultGUIModel::OUTPUT, },
+	{ "Stimulation input", "Input waveform for stimulation", DefaultGUIModel::INPUT, },
+	{ "Stimulation output", "Output waveform for stimulation", DefaultGUIModel::OUTPUT, },
     { "Max spike width (ms)", "Maximum spike duration",
         DefaultGUIModel::PARAMETER | DefaultGUIModel::DOUBLE, },
     { "Min spike width (ms)", "Minimum interval (refractory period) that must pass before another spike is detected",
@@ -68,7 +66,6 @@ MEA::MEA(void) : DefaultGUIModel("MEA", ::vars, ::num_vars) {
 void MEA::customizeGUI(void)
 {
     // TO-DO: allow plot to scale with module window
-    //        inputs/outputs
     QGridLayout *customLayout = DefaultGUIModel::getLayout();
 
     rplot = new BasicPlot(this);
@@ -115,10 +112,9 @@ void MEA::customizeGUI(void)
 MEA::~MEA(void) {}
 
 void MEA::execute(void) {
-    systime = count * dt; //RT::System::getInstance()->getPeriod() * 1e-9; // current time
+    systime = count * RT::System::getInstance()->getPeriod() * 1e-9; // current time
 
-    // TO-DO: possibly change to a FIFO and hold entire buffer frame
-    //        buffer systimes for the current vm buffer? need to figure out how assign spike times
+    // TO-DO: buffer systimes for the current vm buffer to get save accurate spike times
     
     // buffer voltage traces
 	for (int i = 0; i < numChannels; i++) {
@@ -126,7 +122,8 @@ void MEA::execute(void) {
 	}
 	numVoltageReads++;
 	
-	// stimulation output -- need to make this specific to individual channels
+	// TO-DO: need to make this channel specific (add a stim channel input)
+	// stimulation output
 	output(0) = input(1);
     
     count++; // increment count to measure time
@@ -159,7 +156,7 @@ void MEA::update(DefaultGUIModel::update_flags_t flag) {
             bookkeep();
             break;
         case PERIOD:
-            dt = RT::System::getInstance()->getPeriod() * 1e-9; // is this ever called? is calling it every time in execute slower? check DefaultGUIModel
+            dt = RT::System::getInstance()->getPeriod() * 1e-9;
             bookkeep();
             break;
         default:
@@ -170,37 +167,31 @@ void MEA::update(DefaultGUIModel::update_flags_t flag) {
 // custom functions
 void MEA::initParameters() {
     systime = 0;
-    dt = RT::System::getInstance()->getPeriod() * 1e-9;
-    refreshRate = 2; // max refresh rate = 4 Hz
     count = 0;
+    dt = RT::System::getInstance()->getPeriod() * 1e-9;
+    refreshRate = 10; // max refresh rate = 4 Hz
+    spikeDetectWindow = 500e-3;
     note = "";
-    thresh = -20e-3;
-    min_int = 5e-3;
     
-    last_spike_time.resize(numChannels);
-    state.resize(numChannels);
-    spkcount = 0;
-    plotymin = 0;
-    plotymax = numChannels-1;
-    
-    // spike validation variables (user inputs)
-    threshPolarity = 0; // TO-DO: this is an input in Neurorighter
-	numPre = 15; // TO-DO: this is an input in Neurorighter -- these need to be optimized (definitely dependent on samplingFrequency
-	numPost = 15; // TO-DO: this is an input in Neurorighter
+    // spike validation variables
+    threshPolarity = 0; // 0 = bipolar; 1 = negative only; 2 = positive only
+	numPre = 15; // TO-DO: set this based on samplingFrequency (and possibly based on user input in msec)
+	numPost = 15; // TO-DO: set this based on samplingFrequency
 	maxSpikeWidth = floor(10e-3 * samplingFrequency);
 	minSpikeWidth = floor(0.1e-3 * samplingFrequency);
-	minSpikeSlope = 5e-6; // TO-DO: this was 25e-6 in Neurorighter but is too high for my test data
+	minSpikeSlope = 5e-6;
 	maxSpikeAmp = 1000e-6;
-    downsample = 1; // TO-DO: this is an input in Neurorighter
-	deadTime = (int)(1e-3 * samplingFrequency); // TO-DO: where is this used?
+    downsample = 1;
+	deadTime = (int)(1e-3 * samplingFrequency);
     
     // spike detector variables
+    spkcount = 0;
     numVoltageReads = 0;
     threshold.resize(numChannels);
     numUpdates.resize(numChannels);
     initialSamplesToSkip.resize(numChannels);
     regularDetect.resize(numChannels);
-	spikeDetectionBuffer.reserve(vmBufferSize); // TO-DO: set size based on spike detector rate // might need to resize instead of reserve
+	spikeDetectionBuffer.reserve(vmBufferSize); // TO-DO: set size based on spike detector rate
 	detectionCarryOverBuffer.resize(numChannels);
     RMSList.resize(numChannels);
     for(int j = 0; j < numChannels; j++) {
@@ -263,12 +254,10 @@ void MEA::clearData() {
 // spike detection/validation
 void MEA::detectSpikes() {
     int channel;
-    int recIndexOffset;
     int indiciesToSearchForCross, indiciesToSearchForReturn;
 	int idx, i;
     bool skipSpikeDetection;
     double spikeDetectionSum;
-    //std::cout << "Number of voltage reads since last update: " << numVoltageReads << std::endl;
     
     for(channel = 0; channel < numChannels; channel++) {
         // define position in current data buffer
@@ -285,7 +274,6 @@ void MEA::detectSpikes() {
 				vm[channel].pop(vm_temp);
 				spikeDetectionBuffer.prepend(vm_temp);
 			}
-			recIndexOffset = 0; // TO-DO: why is this not used? see Neurorighter code
 		}
 		else
 		{
@@ -299,8 +287,6 @@ void MEA::detectSpikes() {
 			for (int j = 0; j < carryOverLength; j++) {
 				spikeDetectionBuffer.prepend(detectionCarryOverBuffer[channel][j]);
 			}
-			// need to account for the fact that our new spike detection buffer will have a starting index that does not start with new data
-			recIndexOffset = carryOverLength;
 		}
         
         // don't need to run spike detection if buffer is empty (protocol hasn't started) or all 0 (not acquiring data)
@@ -322,12 +308,8 @@ void MEA::detectSpikes() {
             indiciesToSearchForReturn = spikeDetectionBuffer.count() - numPost;
         
             updateThreshold(channel); // update threshold for current channel
-            //if(spikeDetectionBuffer.count() > 0)
-                //std::cout << "Spike detection buffer: " << spikeDetectionBuffer[0] << std::endl;
-            //else
-                //std::cout << "Spike detection buffer is empty" << std::endl;
             
-            // For fixed and adaptive, the current threshold is not a function of i
+            // for fixed and adaptive, the current threshold is not a function of i
             currentThreshold = threshold[channel];
             for (; i < indiciesToSearchForReturn; i++)
             {
@@ -341,13 +323,10 @@ void MEA::detectSpikes() {
                     }
                     else if (!waitToComeDown[channel])
                     {
-                        // We are entering a spike
+                        // entering a spike
                         inASpike[channel] = true;
                         enterSpikeIndex[channel] = i; // TO-DO: maybe use this index (either i or enterSpikeIndex) to set spike times?
-            
-                        // Positive or negative crossing
                         posCross = findSpikePolarityBySlopeOfCrossing(channel);
-                        //std::cout << "Found a spike of polarity: " << posCross << std::endl;
                     }
                 }
                 // exiting a spike, maxspikewidth (to find peak), -numPre and +numPost (to find waveform)
@@ -355,24 +334,21 @@ void MEA::detectSpikes() {
                         ((posCross && spikeDetectionBuffer[i] < currentThreshold) ||
                         (!posCross && spikeDetectionBuffer[i] > -currentThreshold)))
                 {
-                    // now exiting a spike
                     inASpike[channel] = false;
                     exitSpikeIndex[channel] = i;
                     // calculate spike width
                     spikeWidth = exitSpikeIndex[channel] - enterSpikeIndex[channel];
                     // find the index and value of the spike maximum
-                    spikeMaxIndex = findMaxDeflection(enterSpikeIndex[channel], spikeWidth); // TO-DO: posCross? using absolute for now
+                    spikeMaxIndex = findMaxDeflection(enterSpikeIndex[channel], spikeWidth);
                     spikeMax = spikeDetectionBuffer[spikeMaxIndex];
                     // define spike waveform
                     createWaveform(spikeMaxIndex);
                     // check if the spike is any good
-                    goodSpike = checkSpike(); // TO-DO: debug this -- which step is causing all spikes to be thrown out?
+                    goodSpike = checkSpike();
                     if (!goodSpike) {
-                        //std::cout << "Throwing out spike on channel " << channel << std::endl;
                         continue; // if the spike is no good
                     }
                     // record the waveform
-                    //std::cout << "Recording spike on channel " << channel << std::endl;
                     spike.spktime = systime; // TO-DO: this is probably no longer accurate by the time this code is reached
                     spike.channelNum = channel;
                     spike.currentThresh = currentThreshold;

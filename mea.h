@@ -92,38 +92,30 @@ class MEA : public DefaultGUIModel {
 		virtual void update(DefaultGUIModel::update_flags_t);
 	
 	private:
-		// testing variables (delete eventually)
-		double prevtime;
-		int channelSim;
-		
 		// inputs, states, related constants
 		QTimer *timer0 = new QTimer(this);
         QTimer *timer1 = new QTimer(this);
-		double refreshRate;
 		double systime;
-        double dt;
 		long long count; // keep track of plug-in time
-		QString note;
-        double thresh;
-        double min_int;
-        double samplingFrequency = 20000; // TO-DO: better to get this from control panel
-        double spikeDetectWindow = 50e-3;
+        double dt;
+        QString note;
+		double refreshRate;
+		double spikeDetectWindow;
 		
 		// data handling
+		double samplingFrequency = 20000; // TO-DO: better to get this from control panel
 		static const int numChannels = 60;
-        static const int vmBufferSize = 2000;
+        static const int vmBufferSize = 2000; // TO-DO: need this to change based on refreshRate
 		int numVoltageReads;
 		std::array<ringbuffer<double, vmBufferSize>, numChannels> vm;
-		QwtArray<double> last_spike_time;
-		QwtArray<int> state;
 		int spkcount;
-		struct spikeData {
+		struct spikeData { // TO-DO: main output, save anything else?
 			double spktime;
 			double channelNum;
 			double currentThresh;
 			QwtArray<double> wave;
 		};
-		ringbuffer<spikeData, 10000> meaBuffer;
+		ringbuffer<spikeData, 10000> meaBuffer; // TO-DO: need this to change based on refreshRate
 		spikeData spike;
 		spikeData currentSpike;
         
@@ -138,11 +130,11 @@ class MEA : public DefaultGUIModel {
 		int numPost;
 		double maxSpikeWidth;
 		double minSpikeWidth;
+        double maxSpikeAmp;
+        double minSpikeSlope;
         int downsample;
         QVector<QVector<double>> RMSList;
         QVector<double> channelThresh;
-        double maxSpikeAmp;
-        double minSpikeSlope;
 		int deadTime;
         double currentThreshold;
         QVector<double> threshold;
