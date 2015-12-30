@@ -22,7 +22,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "mea.h"
 #include <iostream>
-#include <QtGui>
 #include <qwt_plot_renderer.h>
 #include <qwt_symbol.h>
 
