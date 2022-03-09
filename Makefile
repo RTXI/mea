@@ -14,7 +14,7 @@ SOURCES = mea.cpp \
           /usr/local/lib/rtxi_includes/moc_scrollzoomer.cpp\
           /usr/local/lib/rtxi_includes/moc_basicplot.cpp\
 
-LIBS = -lqwt
+LIBS = -lqwt-qt5
 
 ### Do not edit below this line ###
 
